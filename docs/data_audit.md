@@ -39,3 +39,27 @@ Area and distance calculations will be performed in this projected CRS.
 - Spatial overlap calculations must avoid double-counting overlapping source polygons.
 
 Detailed source URLs, licence terms, fields, revision dates and limitations will be maintained below as implementation progresses.
+
+## SSSI Impact Risk Zones — source findings
+
+The following come from inspecting the local source and reading the supplied documentation. They are facts about the data, not interpretation.
+
+- Publisher: Natural England.
+- Dataset: SSSI Impact Risk Zones (England).
+- Analytical CRS: `EPSG:27700`.
+- Local source inspected on 31 August 2026.
+- 208,538 features, all `MultiPolygon`.
+- Published source attribute: `irzurl`. The supplied attribute metadata describes it as the SSSI Impact Risk Zone advice hyperlink.
+- Supplied User Guidance: version 5.4, issue date 2 April 2025.
+- The guidance describes the IRZs as a tool for a rapid initial assessment of the potential risks to terrestrial SSSIs from development proposals.
+- The guidance says the outcome for a location depends on that location and on the type of development.
+- The guidance documents 13 development categories, but the downloaded dataset does not publish a machine-readable mapping from the 13 `irzcode` digits to those categories.
+- The external download does not contain SSSI names or references.
+- The current source contains 4 invalid geometries.
+
+Implementation decisions from these findings:
+
+- An IRZ intersection is treated as contextual only.
+- `irzurl` is preserved verbatim; the 13-digit `irzcode` is kept as an opaque string and its digits are not interpreted.
+- No risk score, consultation verdict or suitability judgement is derived from an IRZ intersection.
+- Invalid source geometry is not repaired; the loader emits one warning and leaves it unchanged.

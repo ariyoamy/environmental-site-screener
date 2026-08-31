@@ -2,11 +2,12 @@
 
 This file explains the methods I have implemented so far.
 
-At the moment, the code covers three parts of the screening workflow:
+At the moment, the code covers four parts of the screening workflow:
 
 - checking that a candidate site boundary is usable
 - calculating overlap between a candidate site and SSSI polygons
 - finding the nearest SSSI to a candidate site
+- checking whether a candidate site falls within a mapped SSSI Impact Risk Zone
 
 I am keeping this file close to the code. Planned ideas can go in the README, project scope or issues. This document is for methods that are already implemented and tested.
 
@@ -186,3 +187,49 @@ If several SSSIs have exactly the same calculated minimum distance, all of them 
 ### Checking this
 
 `tests/test_distance.py` uses a 1,000 m square site and simple polygons: a known 100 m gap, the nearest of several features, a diagonal corner-to-corner distance with a known Euclidean value, a boundary touch and a positive-area overlap both giving 0.0, two exactly equidistant SSSIs both returned and sorted by `ref_code`, a MultiPolygon where the nearest part sets the distance, and the CRS and input guards. `scripts/check_sssi_distance.py` runs the function against the real SSSI GeoPackage and checks the result is sane.
+
+## SSSI Impact Risk Zones
+
+### What this step does
+
+`load_sssi_irz()` reads the Natural England SSSI Impact Risk Zones (IRZ) GeoPackage. `calculate_sssi_irz_context()` then reports whether part of a candidate site falls inside one or more IRZ polygons.
+
+An IRZ polygon is a mapped area around SSSIs where some types or scales of development could have potential adverse impacts and Natural England's advice should be checked. This step only provides that context.
+
+### Loading the source
+
+The source must already be in `EPSG:27700`. It is not reprojected.
+
+The published attribute the loader needs is `irzurl`, the hyperlink to Natural England's online IRZ advice. It is kept verbatim.
+
+From each `irzurl` the loader parses `irz_code`: the 13-digit `irzcode` value in the URL, kept as an opaque string. Its individual digits are not interpreted. The `notes=` and `location=` parameters in the URL are ignored. `load_sssi_irz()` returns `irzurl`, `irz_code` and `geometry`.
+
+Null, empty and non-polygon geometry is rejected. Invalid geometry is not repaired: this is an authoritative source, so the loader leaves any invalid polygons unchanged and emits one warning with the count. The 31 August 2026 source has 4 invalid geometries, so the warning fires on the real file.
+
+### How the context check works
+
+`calculate_sssi_irz_context()` takes the validated site from `validate_site()` and the IRZ layer from `load_sssi_irz()`. It checks that both are `GeoDataFrames`, both have a CRS, both are in `EPSG:27700`, the site has one row, and the IRZ layer has `irzurl` and `irz_code`. It does not reproject or repair geometry.
+
+It uses the IRZ layer's spatial index to find candidate polygons, then checks the real site/IRZ intersection. Only positive-area intersection counts. A site that only touches an IRZ boundary line or a corner has no IRZ context.
+
+The result reports:
+
+- `has_irz_context`: whether any IRZ polygon is intersected with positive area
+- `zones`: the qualifying IRZ polygons, with their original (unclipped) geometries, `irzurl` and `irz_code`, sorted by `irzurl`
+- `advice_urls`: the distinct advice URLs from those zones
+
+It does not report overlap area, overlap percentage or nearest-IRZ distance. If there is no context, or the IRZ layer has no rows, it returns an empty result with the same columns and CRS.
+
+### What has_irz_context = True means
+
+It means only that part of the candidate site falls within one or more mapped IRZ advice areas.
+
+It is not a finding that development will harm an SSSI, that Natural England consultation is required, that the site is unsuitable, or that any planning or legal conclusion has been reached. The actual advice depends on the type and scale of the proposed development and must be checked through the Natural England advice URL.
+
+### A note on the source shape
+
+Inspection of the 31 August 2026 source found the IRZ polygons behave as an effectively non-overlapping coverage: they share boundaries and produce only negligible floating-point sliver overlaps. The analysis does not rely on this always being true. If a future release has genuinely overlapping polygons, `calculate_sssi_irz_context()` still just returns every polygon the site intersects with positive area.
+
+### Checking this
+
+`tests/test_sssi_irz.py` covers the loader and the context check with small synthetic GeoPackages and geometries: valid load and exact output columns, missing file, wrong or missing CRS, missing/null/empty `irzurl`, null/empty/non-polygon geometry, an empty source, invalid geometry that warns but is left unchanged, 13-digit code parsing, an unparseable code that leaves `irz_code` missing with a warning, a site inside one zone, a site spanning two zones, no context, boundary touch only, two zone rows sharing one URL, an empty IRZ layer, and the CRS, type, column and row guards. `scripts/check_sssi_irz_context.py` runs the loader and context check against the real IRZ GeoPackage.
