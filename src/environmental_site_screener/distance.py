@@ -1,8 +1,8 @@
 """Nearest-SSSI distance analysis for a validated candidate site.
 
-:func:`calculate_nearest_sssi` reports the closest Site of Special Scientific
-Interest to a candidate site and the edge-to-edge distance in metres. It is
-intended mainly for the case where
+:func:`calculate_nearest_sssi` reports the nearest SSSI feature or features to a
+candidate site and the edge-to-edge distance in metres. It is intended mainly
+for the case where
 :func:`environmental_site_screener.overlap.calculate_sssi_overlap` found no
 positive-area overlap.
 
