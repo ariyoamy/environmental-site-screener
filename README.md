@@ -4,7 +4,27 @@ Early-stage geospatial project for screening proposed development or infrastruct
 
 The idea is simple: provide a candidate site boundary, run a set of transparent GIS checks, and return a clear summary of mapped environmental constraints or sensitivities that may need further investigation.
 
-This is being built as a practical portfolio project using Python and open spatial data. It is not intended to replace ecological survey, environmental assessment, planning advice or statutory Biodiversity Net Gain calculations.
+I am building this as a practical portfolio project using Python and open spatial data. It is not intended to replace ecological survey, environmental assessment, planning advice or statutory Biodiversity Net Gain calculations.
+
+## Current status
+
+The first SSSI screening pieces are now implemented.
+
+So far, the code can:
+
+- validate a candidate site boundary;
+- load and validate the Natural England SSSI source data;
+- calculate positive-area overlap between a candidate site and SSSI polygons;
+- return overlap area in square metres and hectares;
+- calculate the percentage of the candidate site affected by SSSI overlap;
+- avoid double-counting overlapping SSSI geometry when calculating the total affected area;
+- ignore boundary-touch cases where there is no real area of overlap.
+
+The SSSI overlap code has been tested with synthetic geometries and against the real Natural England dataset. The current test suite has 55 passing tests.
+
+Nearest-SSSI distance is the next SSSI calculation to add. It is not implemented yet.
+
+The other environmental themes and the interactive application are still to be built.
 
 ## What the tool will check
 
@@ -58,13 +78,3 @@ It will not determine:
 
 The purpose is early screening: identifying mapped issues that may need a closer look.
 
-## Repository structure
-
-Planned structure:
-
-```text
-docs/          project notes, methodology and data-source documentation
-src/           application and spatial-analysis code
-tests/         test cases and validation checks
-data/          data instructions and small example files where appropriate
-screenshots/   figures and application screenshots
