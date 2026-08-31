@@ -1,0 +1,22 @@
+# Deliberate light theme for the Environmental Site Screener MVP, matching the
+# app's CSS token system (see the CSS block in app.py). This MVP is designed
+# light-first; a full dark theme is out of scope for this pass. Streamlit's
+# Settings dialog can still switch an individual viewer to dark mode - that is a
+# known limitation recorded in the task report, not something worth a brittle
+# CSS or DOM hack to suppress.
+
+[theme]
+base = "light"
+primaryColor = "#1f6f5c"
+backgroundColor = "#fbfaf5"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#17302e"
+font = "sans serif"
+
+[client]
+# Trim the top-right toolbar to essentials so the app reads as a product
+# workspace rather than a dev prototype.
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false
