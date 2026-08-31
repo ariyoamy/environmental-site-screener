@@ -31,3 +31,4 @@ data/cache/
 # Temporary files
 *.tmp
 *.log
+.Rhistory
