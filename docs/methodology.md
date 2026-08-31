@@ -435,3 +435,80 @@ Flood Zone 1 (less than 0.1% annual probability) is not supplied as geometry. Th
 ### Checking this
 
 `tests/test_flood_zones.py` covers the loader and the overlap function with small synthetic GeoPackages and geometries: valid load and exact schema/CRS/index, missing file, missing required column, wrong or missing CRS, null/empty/non-polygon geometry, an empty source, invalid geometry that warns but is left unchanged, allowed `FZ2`/`FZ3`, an unknown or null or empty `flood_zone` that raises, null `flood_source` and null `origin` allowed, `river and sea` preserved verbatim; a `bbox=None` full read, a bounding box selecting only nearby polygons, a bounding box with nothing nearby returning an empty normalised layer, analysis of that empty subset giving a genuine zero result, a bounding-box false positive that only touches the site boundary being dropped by the exact intersection, a bounding-box subset giving the same arithmetic as the full read, and missing source / wrong CRS / missing column still raising on the bounding-box path; a site inside FZ3, a site spanning disjoint FZ2 and FZ3, a constructed overlapping FZ2/FZ3 case where the headline union is less than the sum of the per-zone areas, overlapping same-zone polygons unioned rather than summed, a boundary touch excluded, a no-overlap zero result with exact schema and CRS, null flood sources excluded from the provenance, multi-source provenance retained, the hectare and percentage arithmetic, the result sorting, the exact result schema and CRS, the frozen dataclass, and the type, CRS, row and column guards. `scripts/check_flood_zones_overlap.py` runs the intended app workflow against the real GeoPackage: it reads the national feature count from metadata, reads one feature to pick a deterministic site, then loads only that site's bounding box and runs the overlap.
+
+## Full site screening
+
+`load_screening_datasets()` and `screen_site()` in `screening.py` run all five themes for one candidate site in a single call. This layer adds no new spatial logic; it wires the existing per-theme loaders and analysis functions together.
+
+### Loading the datasets
+
+`load_screening_datasets()` reads the reusable source layers once and returns them in a frozen `ScreeningDatasets` dataclass:
+
+- SSSI (`load_sssi`)
+- SSSI IRZ (`load_sssi_irz`)
+- Priority Habitats (`load_priority_habitats`)
+- Ancient Woodland revised (`load_ancient_woodland_revised`)
+- Ancient Woodland legacy (`load_ancient_woodland_legacy`)
+- revised Ancient Woodland coverage (`load_revised_coverage`)
+- the Flood Zones source path
+
+The first six are held as loaded `GeoDataFrame`s because they are reused between site runs. Flood Zones is different: its production loader is bounding-box based, so `ScreeningDatasets` keeps only the file path and the bounding-box read happens per site.
+
+### screen_site()
+
+`screen_site(site, datasets)`:
+
+- validates the candidate site with `validate_site()`
+- runs SSSI overlap
+- calculates the nearest SSSI only when there is no SSSI overlap
+- checks SSSI IRZ context
+- calculates Priority Habitat overlap
+- calculates Ancient Woodland overlap using revised/legacy precedence
+- loads only the candidate site's Flood Zones bounding box, `load_flood_zones(path, bbox=tuple(site.total_bounds))`
+- calculates Flood Zone overlap
+- builds the five-row summary
+
+Loader and validation errors are not caught. A broken required dataset fails visibly rather than turning into a false "no constraint" result. Input `GeoDataFrame`s are not mutated.
+
+### ScreeningResult
+
+`screen_site()` returns a frozen `ScreeningResult` holding:
+
+- the validated site
+- the SSSI overlap result
+- the nearest-SSSI result, or `None` when the site overlaps an SSSI
+- the SSSI IRZ context result
+- the Priority Habitats result
+- the Ancient Woodland result
+- the Flood Zones result
+- the `summary` DataFrame
+
+The individual result objects are kept as they are, not flattened, so a caller can drill into any of them.
+
+### The summary table
+
+`summary` is a plain pandas DataFrame with one row per theme, in the order SSSI, SSSI Impact Risk Zone, Priority Habitats, Ancient Woodland, Flood Zones. Columns:
+
+- `theme` — the theme name
+- `has_result` — whether that theme found something for this site (positive-area SSSI overlap; positive-area IRZ context; priority-habitat overlap; ancient-woodland overlap; mapped FZ2 or FZ3 overlap)
+- `result_type` — either `overlap` or `context`, nothing else; only IRZ is `context`
+- `feature_count` — that theme's own count
+- `affected_area_ha` — hectares of the site affected, from that theme's overall union result
+- `affected_pct` — that area as a percentage of the site
+- `nearest_distance_m` — nearest SSSI distance in metres, populated only when there was no SSSI overlap
+
+Interpretation notes:
+
+- IRZ `affected_area_ha` and `affected_pct` are null. IRZ is contextual and an overlap area is not a meaningful metric for it.
+- A zero rather than a null in an area or percentage column means the metric applies to that theme and the measured value is genuinely zero, for example an ancient-woodland check that ran and found no overlap.
+- `feature_count` does not mean the same thing across themes: SSSI features, IRZ intersecting zones, Priority Habitat classes, Ancient Woodland (inventory, category) output rows, Flood Zone rows. It is for compact display, not cross-theme comparison.
+
+### What the orchestration does not calculate
+
+There is no total constraint count, no cross-theme affected area, no cross-theme percentage, no environmental score, no severity weighting, no red/amber/green, no pass/fail. Different themes can overlap spatially and represent different environmental concepts, so their areas are never summed.
+
+### Checking this
+
+`tests/test_screening.py` covers the integration behaviour with synthetic layers: all five themes running, the exact summary schema and row order, a site given in `EPSG:4326` being validated and reprojected once, nearest SSSI being skipped when there is overlap and run when there is not, the IRZ area and percentage staying null, a genuine zero for a theme that ran and found nothing, revised/legacy precedence surviving the orchestration, the Flood Zones loader receiving the validated site's bounding box, inputs not being mutated, and a broken required dataset raising rather than returning a false result.
+
+`scripts/check_full_screening.py` runs the whole thing once against the real local sources. The current run produced overlap, context and nearest-distance results together in one screen. Loading the reusable national layers took about 41.6 s once (dominated by the Priority Habitats GeoPackage); the single `screen_site()` call took about 1.3 s. The datasets are therefore meant to be loaded once and reused across site runs.
