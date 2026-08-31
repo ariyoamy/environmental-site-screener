@@ -2,13 +2,14 @@
 
 This file explains the methods I have implemented so far.
 
-At the moment, the code covers five parts of the screening workflow:
+At the moment, the code covers six parts of the screening workflow:
 
 - checking that a candidate site boundary is usable
 - calculating overlap between a candidate site and SSSI polygons
 - finding the nearest SSSI to a candidate site
 - checking whether a candidate site falls within a mapped SSSI Impact Risk Zone
 - calculating overlap between a candidate site and mapped priority habitat
+- calculating overlap between a candidate site and ancient woodland, revised or legacy
 
 I am keeping this file close to the code. Planned ideas can go in the README, project scope or issues. This document is for methods that are already implemented and tested.
 
@@ -298,3 +299,77 @@ The four context classes are returned separately in `context`, with `uid`, `cont
 ### Checking this
 
 `tests/test_priority_habitats.py` covers the loader and the overlap function with small synthetic GeoPackages and geometries: valid load and exact output columns, missing file, missing required column, wrong or missing CRS, null/empty/non-polygon geometry, null/empty/duplicate `uid`, null/empty `mainhabs` or `habcodes`, a `mainhabs`/`habcodes` token-count mismatch that raises, an unknown habitat code that raises, invalid geometry that warns but is left unchanged, the four context codes giving `is_priority` false, representative priority codes giving `is_priority` true, a `GQSIG,TORCH` polygon feeding both the priority metric and context, `addhabs` not affecting the priority metric, overlapping same-class polygons unioned rather than summed, a boundary touch excluded, a context-only site, the per-class areas summing to more than the overall affected area, the exact result schemas and CRS, the frozen dataclass, and the CRS, type, column and row guards. `scripts/check_priority_habitats_overlap.py` runs the loader and overlap function against the real PHI GeoPackage.
+
+## Ancient Woodland
+
+### What this step does
+
+There are two Natural England ancient woodland inventories: a **revised** one (`Ancient Woodland - Revised (England) - Completed Counties`) being rebuilt county by county, and the older **legacy** one (`Ancient Woodland (England)`) that still covers the rest of the country. Natural England's rule is that where a county has been done in the revised inventory, the revised data takes precedence there and the legacy data is the fallback everywhere else. The two must not simply be merged: they overlap heavily inside the revised counties, so a union would double-count.
+
+`load_ancient_woodland_revised()` and `load_ancient_woodland_legacy()` read the two sources. `load_revised_coverage()` builds the polygon that says where "revised" applies. `calculate_ancient_woodland_overlap()` splits the candidate site along that coverage boundary, runs the revised inventory on the inside part and the legacy inventory on the outside part, and reports how much ancient woodland the site overlaps.
+
+### The revised coverage allow-list
+
+Natural England does not publish a completed-county list or a coverage layer, and the revised GeoPackage has no county field. So the coverage is a **project inference**, not Natural England metadata. It is a fixed allow-list of 29 ceremonial counties held in the code as `REVISED_COVERAGE_COUNTIES`, worked out from the current revised snapshot plus a county-by-county diagnostic (assigning every revised and legacy polygon to a ceremonial county by an interior point, then checking nearest-neighbour distance and grid coverage). **This list must be reviewed whenever the revised source is refreshed.**
+
+`load_revised_coverage()` reads the OS Boundary-Line ceremonial counties layer and filters it to that allow-list. The source must be `EPSG:27700` and must have a `NAME` field. Every allow-list county must be present exactly once; a missing or duplicated allow-list county raises. Null, empty, non-polygon or invalid geometry among the **selected** counties raises rather than being repaired. Invalid geometry outside the selected counties (the Boundary-Line `Shetland` polygon is a self-intersection, for example) is never looked at and does not matter. The result has `county_name` and `geometry`, sorted by name, in `EPSG:27700`.
+
+Two named exclusions:
+
+- **Somerset** is left out because the revised inventory only covers part of ceremonial Somerset (the former-Avon north and east); the west of the county is still legacy-only, so treating the whole county as revised would be wrong.
+- **City and County of the City of London** is excluded separately; it carries no ancient woodland and is not a delivery area.
+
+**Hampshire** is included, with a caveat: the revised inventory looks complete across the county apart from a small cluster of legacy woods near the south-east edge (around the West Sussex border). It is close enough to whole-county to treat as revised.
+
+### Loading the two inventories
+
+Both loaders return the same normalised columns: `aw_name`, `category_code`, `category_name`, `theme_id`, `inventory` and `geometry`. `inventory` is the literal `"revised"` or `"legacy"`.
+
+The category codes are kept per source and are **not** normalised across inventories:
+
+- revised: `ASNW`, `ARW`, `AWPP`, `IAWPP`
+- legacy: `ASNW`, `PAWS`, `AWP`
+
+Revised `ARW` (Ancient Replanted Woodland) and legacy `PAWS` (Plantations on Ancient Woodland Sites) are the same idea under different codes, and revised `AWPP` and legacy `AWP` are both wood pasture, but the code and name are left exactly as the source gives them so it is always clear which inventory a result row came from.
+
+Both sources must already be in `EPSG:27700`; neither loader reprojects. Null, empty and non-polygon geometry is rejected. Invalid geometry is left unchanged, with one warning giving the count: the current revised source has 69 invalid geometries (ring self-intersections), so that warning fires on the real file; the current legacy source has none. The source `area` and `perimeter` fields are not read and take no part in any calculation. Blank woodland names are allowed and `theme_id` is not required to be unique (a multi-part wood shares one ID). The legacy `themid` is a number in the source and is cleaned to a string with no trailing `.0`. Each `category_code` to `category_name` pairing is checked against the mapping in the delivered GeoPackages (not the supporting PDFs, which disagree with the data on the replanted-woodland code); an unexpected code, or a code/name pair that does not match, raises.
+
+### How overlap is measured
+
+`calculate_ancient_woodland_overlap()` takes the validated site, the revised inventory, the legacy inventory and the revised coverage. It checks that all four are `GeoDataFrames`, all have a CRS and are in `EPSG:27700`, the site has one row, the revised and legacy layers have the normalised columns, and the coverage is non-empty and polygonal. It does not reproject or repair anything.
+
+The site is partitioned by the coverage:
+
+```text
+revised_part  = site ∩ revised coverage
+fallback_part = site − revised coverage
+```
+
+The revised inventory is used only against `revised_part`, and the legacy inventory only against `fallback_part`. That is the precedence rule: revised where revised coverage applies, legacy elsewhere. The two parts do not overlap, so ground near the coverage boundary is not counted twice.
+
+Spatial indexes are used twice: once to find which coverage counties the site touches (only those are unioned, not all 29), and once per side to find candidate woodland polygons. For each candidate the real intersection with the relevant site part is taken, and only positive-area intersections are kept. A site that only touches a woodland or coverage boundary line or corner does not count.
+
+### Per-category results
+
+`features` has one row per `(inventory, category_code)` pair the site overlaps, with `inventory`, `category_code`, `category_name`, `intersection_area_m2`, `intersection_area_ha` and the clipped `geometry`. For each pair the clipped pieces are combined into one geometry before the area is measured, so overlapping source polygons of the same category are not double-counted. Rows are sorted by area, largest first, then by `inventory`, then by `category_code`.
+
+### Overall affected area
+
+The overall affected area is not the sum of the per-category areas. Every kept clipped piece, from both site parts, is combined into one geometry and the area of that is measured, so ground under more than one woodland polygon or more than one category is counted once.
+
+Hectares are square metres divided by 10,000. The affected percentage is the affected ancient-woodland area divided by the site area, times 100. Values are returned as calculated, without rounding. The result also records `revised_coverage_area_m2` (how much of the site fell inside revised coverage) and `fallback_area_m2` (how much fell outside); these add up to the site area.
+
+### Missing sources
+
+If the site has a part inside revised coverage but the revised layer is empty, the function raises rather than reporting zero, because a zero there would really mean "the required source was missing". The same applies if the site has a fallback part but the legacy layer is empty. A non-empty source that genuinely has no woodland near the site gives an honest zero result.
+
+### What this step does not do
+
+- no severity score or ranking of woodland categories
+- no planning, legal, ecological-harm or suitability conclusion
+- no distance to the nearest ancient woodland when nothing overlaps
+- source `area` and `perimeter` are not used
+
+### Checking this
+
+`tests/test_ancient_woodland.py` covers the loaders, the coverage loader and the overlap function with small synthetic GeoPackages and geometries: both loaders' exact schemas, missing file, missing required column, wrong or missing CRS, null/empty/non-polygon geometry, invalid revised and legacy geometry warning and staying unchanged, all allowed codes and an unknown code that raises, a code/name mismatch that raises, blank names allowed, duplicate `theme_id` allowed, numeric `themid` cleaned to a string; the coverage loader selecting exactly the 29-county allow-list, a missing or duplicated allow-list county raising, invalid selected coverage geometry raising, invalid non-selected geometry ignored, missing `NAME`, wrong CRS, non-polygon selected geometry; a site fully inside coverage ignoring a co-located legacy polygon, a site fully outside using legacy only, a site crossing the boundary using revised on one side and legacy on the other, a site outside all coverage, a site intersecting one coverage polygon of several, a site straddling two adjacent coverage polygons, revised polygons outside coverage ignored, legacy polygons inside coverage ignored, overlapping same-category polygons unioned rather than summed, per-category areas summing to more than the headline, a boundary touch excluded, a no-overlap zero result, a required-side-empty inventory raising, the exact result schema and CRS, the hectare and percentage arithmetic, and the frozen dataclass. `scripts/check_ancient_woodland_overlap.py` runs the whole pipeline against the real revised, legacy and OS Boundary-Line sources; after the spatial-index prefiltering the site analysis itself takes about 0.1 s (the time is dominated by reading the two large GeoPackages).
