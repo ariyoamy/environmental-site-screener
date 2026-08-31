@@ -63,3 +63,46 @@ Implementation decisions from these findings:
 - `irzurl` is preserved verbatim; the 13-digit `irzcode` is kept as an opaque string and its digits are not interpreted.
 - No risk score, consultation verdict or suitability judgement is derived from an IRZ intersection.
 - Invalid source geometry is not repaired; the loader emits one warning and leaves it unchanged.
+
+## Priority Habitats — source findings
+
+These come from inspecting the local source and reading the supplied metadata. They are facts about the data, not interpretation.
+
+- Publisher: Natural England.
+- Dataset: Priority Habitats Inventory (England).
+- Analytical CRS: `EPSG:27700`.
+- Local source inspected on 31 August 2026.
+- Publication version recorded in the source: `Sep_25`.
+- 799,637 features, all `MultiPolygon`.
+- The current source contains one invalid geometry.
+- `uid` is unique and non-null.
+- Key fields and their meaning:
+  - `mainhabs`: list of main habitats present in the polygon
+  - `habcodes`: habitat codes, corresponding to `mainhabs`
+  - `featdesc`: additional habitat feature / sub-class description
+  - `featcodes`: codes corresponding to the feature descriptions
+  - `otherclass`: other survey classification
+  - `addhabs`: additional habitats present
+  - `primsource`: primary data source
+  - `areaha`: source polygon area
+  - `version`: publication version
+  - `uid`: unique polygon identifier
+- 83 distinct `mainhabs` combinations.
+- 10,821 rows carry more than one main habitat, with up to three main habitats in a single polygon.
+- Four context / non-priority classes:
+  - Fragmented heath (`FHEAT`)
+  - Grass moorland (`GMOOR`)
+  - Good quality semi-improved grassland (`GQSIG`)
+  - No main habitat (`NMHAB`)
+- Seven real polygons mix `GQSIG` with the priority habitat `TORCH` (Traditional orchard).
+- `addhabs` is additional habitat information; it is not promoted into the main priority metric.
+- The current release is effectively non-overlapping geometrically, but the implementation still uses union-based de-duplication and does not rely on that staying true.
+- The inventory is built from multiple contributing surveys and inventories; `primsource` is retained for provenance.
+
+Implementation decisions from these findings:
+
+- The four context classes are excluded from the priority affected-area metric and surfaced separately, with no area or percentage.
+- The loader works from an explicit list of 27 priority codes and 4 context codes; an unknown `habcodes` token raises rather than being guessed.
+- `mainhabs` and `habcodes` are split and paired positionally; mismatched token counts raise.
+- Only the retained attributes plus geometry are read from the GeoPackage; `areaha` is not used for overlap calculations.
+- Invalid source geometry is not repaired; the loader emits one warning and leaves it unchanged.

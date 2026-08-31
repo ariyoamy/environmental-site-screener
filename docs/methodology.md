@@ -2,12 +2,13 @@
 
 This file explains the methods I have implemented so far.
 
-At the moment, the code covers four parts of the screening workflow:
+At the moment, the code covers five parts of the screening workflow:
 
 - checking that a candidate site boundary is usable
 - calculating overlap between a candidate site and SSSI polygons
 - finding the nearest SSSI to a candidate site
 - checking whether a candidate site falls within a mapped SSSI Impact Risk Zone
+- calculating overlap between a candidate site and mapped priority habitat
 
 I am keeping this file close to the code. Planned ideas can go in the README, project scope or issues. This document is for methods that are already implemented and tested.
 
@@ -233,3 +234,67 @@ Inspection of the 31 August 2026 source found the IRZ polygons behave as an effe
 ### Checking this
 
 `tests/test_sssi_irz.py` covers the loader and the context check with small synthetic GeoPackages and geometries: valid load and exact output columns, missing file, wrong or missing CRS, missing/null/empty `irzurl`, null/empty/non-polygon geometry, an empty source, invalid geometry that warns but is left unchanged, 13-digit code parsing, an unparseable code that leaves `irz_code` missing with a warning, a site inside one zone, a site spanning two zones, no context, boundary touch only, two zone rows sharing one URL, an empty IRZ layer, and the CRS, type, column and row guards. `scripts/check_sssi_irz_context.py` runs the loader and context check against the real IRZ GeoPackage.
+
+## Priority Habitats
+
+### What this step does
+
+`load_priority_habitats()` reads the Natural England Priority Habitats Inventory (PHI) GeoPackage. `calculate_priority_habitat_overlap()` then reports where a candidate site overlaps mapped priority habitat: whether there is any positive-area overlap, which habitat classes are involved, how much of each falls inside the site, and how much of the site is affected overall.
+
+The PHI is not a single "priority habitat" layer. Natural England's catalogue for this release lists 27 priority habitat classes plus four classes that are not priority habitat. This step keeps those apart rather than treating every PHI polygon as priority habitat.
+
+### Loading the source
+
+The source must already be in `EPSG:27700`. It is not reprojected.
+
+The loader keeps `uid`, `mainhabs`, `habcodes`, `is_priority`, `featdesc`, `addhabs`, `primsource` and `geometry`. Only those required attributes plus geometry are read from the GeoPackage; other source fields such as `areaha` are not read at all, so the source polygon area plays no part in any calculation here.
+
+The project works from an explicit set of 27 priority habitat codes and four context codes. The context (non-priority) codes are:
+
+- `FHEAT` — Fragmented heath
+- `GMOOR` — Grass moorland
+- `GQSIG` — Good quality semi-improved grassland
+- `NMHAB` — No main habitat
+
+`mainhabs` (names) and `habcodes` (codes) are comma-separated and can list more than one habitat for a polygon. They are split, whitespace-stripped, and paired positionally. If a row's `mainhabs` and `habcodes` token counts do not match, the loader raises an error rather than guessing the pairing. If a `habcodes` token is not one of the 27 priority or 4 context codes, the loader raises an error naming the unexpected codes rather than guessing what it means.
+
+`is_priority` is `True` when at least one `habcodes` token is a priority code.
+
+`addhabs` (additional habitats present) is kept as provenance only. It never contributes to the priority-habitat overlap metric.
+
+Geometry is not repaired. Null, empty and non-polygon geometry is rejected. Invalid geometry is left unchanged: this is an authoritative source, so the loader emits one warning with the count and does not alter the polygons. The 31 August 2026 source has one invalid geometry, so the warning fires on the real file.
+
+### How overlap is measured
+
+`calculate_priority_habitat_overlap()` takes the validated site from `validate_site()` and the PHI layer from `load_priority_habitats()`. It checks that both are `GeoDataFrames`, both have a CRS, both are in `EPSG:27700`, the site has one row, and the PHI layer has `uid`, `mainhabs`, `habcodes` and `primsource`. It does not reproject or repair geometry.
+
+It uses the PHI spatial index to find candidate polygons, then checks the real site/polygon intersection. Only positive-area intersection counts. A site that only touches a polygon boundary line or a corner is not an overlap.
+
+Classification is per main-habitat code token, not simply per polygon. For each positive-area intersection the `mainhabs` and `habcodes` tokens are paired; each priority token attributes that polygon's clipped geometry to that priority class, and each context token adds the polygon to the context result. A polygon coded `GQSIG,TORCH` therefore contributes Traditional orchard to the priority metric and `GQSIG` to context at the same time.
+
+### Per-class results
+
+`habitats` has one row per priority habitat class the site overlaps, with `habitat_code`, `habitat_name`, `intersection_area_m2`, `intersection_area_ha` and the clipped `geometry`. For each class its clipped pieces are combined into one geometry before the area is measured, so overlapping source polygons of the same class are not double-counted. Rows are sorted by area, largest first, then by code.
+
+### Overall affected area
+
+The overall affected area is not the sum of the per-class areas. All the clipped pieces that belong to at least one priority class are combined into one geometry and the area of that is measured, so ground under more than one priority habitat is counted once.
+
+A polygon with several priority main habitats contributes its clipped geometry to each of those classes. Because of that, the sum of the per-class areas can legitimately exceed the overall affected area: the same ground is attributed to more than one habitat class, while the headline affected area counts that ground once.
+
+Hectares are square metres divided by 10,000. The affected percentage is the priority-habitat affected area divided by the site area, times 100. Values are returned as calculated, without rounding.
+
+### Context classes
+
+The four context classes are returned separately in `context`, with `uid`, `context_codes`, `context_habitats`, `primsource` and the original unclipped polygon geometry. A polygon carrying more than one context code reports those codes together, and rows are sorted by `uid`. No area or percentage is calculated for context; it is there as information, not as a constraint measure.
+
+### What this step does not do
+
+- no ecological quality score, habitat severity ranking or condition assessment
+- no planning, legal or ecological-harm conclusion
+- no distance to the nearest priority habitat when nothing overlaps
+- source `areaha` is not used
+
+### Checking this
+
+`tests/test_priority_habitats.py` covers the loader and the overlap function with small synthetic GeoPackages and geometries: valid load and exact output columns, missing file, missing required column, wrong or missing CRS, null/empty/non-polygon geometry, null/empty/duplicate `uid`, null/empty `mainhabs` or `habcodes`, a `mainhabs`/`habcodes` token-count mismatch that raises, an unknown habitat code that raises, invalid geometry that warns but is left unchanged, the four context codes giving `is_priority` false, representative priority codes giving `is_priority` true, a `GQSIG,TORCH` polygon feeding both the priority metric and context, `addhabs` not affecting the priority metric, overlapping same-class polygons unioned rather than summed, a boundary touch excluded, a context-only site, the per-class areas summing to more than the overall affected area, the exact result schemas and CRS, the frozen dataclass, and the CRS, type, column and row guards. `scripts/check_priority_habitats_overlap.py` runs the loader and overlap function against the real PHI GeoPackage.
