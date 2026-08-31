@@ -2,7 +2,7 @@
 
 This file explains the methods I have implemented so far.
 
-At the moment, the code covers six parts of the screening workflow:
+At the moment, the code covers seven parts of the screening workflow:
 
 - checking that a candidate site boundary is usable
 - calculating overlap between a candidate site and SSSI polygons
@@ -10,6 +10,7 @@ At the moment, the code covers six parts of the screening workflow:
 - checking whether a candidate site falls within a mapped SSSI Impact Risk Zone
 - calculating overlap between a candidate site and mapped priority habitat
 - calculating overlap between a candidate site and ancient woodland, revised or legacy
+- calculating overlap between a candidate site and mapped Flood Zone 2 or 3
 
 I am keeping this file close to the code. Planned ideas can go in the README, project scope or issues. This document is for methods that are already implemented and tested.
 
@@ -373,3 +374,64 @@ If the site has a part inside revised coverage but the revised layer is empty, t
 ### Checking this
 
 `tests/test_ancient_woodland.py` covers the loaders, the coverage loader and the overlap function with small synthetic GeoPackages and geometries: both loaders' exact schemas, missing file, missing required column, wrong or missing CRS, null/empty/non-polygon geometry, invalid revised and legacy geometry warning and staying unchanged, all allowed codes and an unknown code that raises, a code/name mismatch that raises, blank names allowed, duplicate `theme_id` allowed, numeric `themid` cleaned to a string; the coverage loader selecting exactly the 29-county allow-list, a missing or duplicated allow-list county raising, invalid selected coverage geometry raising, invalid non-selected geometry ignored, missing `NAME`, wrong CRS, non-polygon selected geometry; a site fully inside coverage ignoring a co-located legacy polygon, a site fully outside using legacy only, a site crossing the boundary using revised on one side and legacy on the other, a site outside all coverage, a site intersecting one coverage polygon of several, a site straddling two adjacent coverage polygons, revised polygons outside coverage ignored, legacy polygons inside coverage ignored, overlapping same-category polygons unioned rather than summed, per-category areas summing to more than the headline, a boundary touch excluded, a no-overlap zero result, a required-side-empty inventory raising, the exact result schema and CRS, the hectare and percentage arithmetic, and the frozen dataclass. `scripts/check_ancient_woodland_overlap.py` runs the whole pipeline against the real revised, legacy and OS Boundary-Line sources; after the spatial-index prefiltering the site analysis itself takes about 0.1 s (the time is dominated by reading the two large GeoPackages).
+
+## Flood Map for Planning – Flood Zones
+
+### What this step does
+
+`load_flood_zones()` reads the Environment Agency Flood Map for Planning – Flood Zones GeoPackage (layer `Flood_Zones_2_3_Rivers_and_Sea`). `calculate_flood_zone_overlap()` then reports how much of a candidate site overlaps mapped Flood Zone 2 or Flood Zone 3.
+
+This is river and sea flood risk for planning. It is not a property-level flood check, not a flood-risk score, and not a safe/unsafe or planning-permission conclusion.
+
+### Loading the source
+
+The source must already be in `EPSG:27700`; the loader does not reproject. It requires the fields `origin`, `flood_zone` and `flood_source`, and reads only those plus geometry. `flood_zone` must be non-null, non-empty and one of `FZ2` or `FZ3`; anything else raises. Null, empty and non-polygon geometry is rejected. Invalid geometry is left unchanged, with one warning giving the count (the current real source is clean, so no warning fires on it). `flood_source` and `origin` may be null and are preserved as `None`; they are kept verbatim and are not checked against a fixed list of allowed values. The source `fid` is not retained.
+
+`load_flood_zones(path, bbox=None)` takes an optional bounding box:
+
+- `bbox=None` reads the whole national source. This is for audits and manual validation. An actually empty national source raises.
+- `bbox=(minx, miny, maxx, maxy)` in `EPSG:27700` first does lightweight metadata checks with `pyogrio.read_info` (source readable, CRS, required fields), then uses the GeoPackage spatial index to read only the features whose bounding box intersects the box. A valid box with no matching features returns an empty layer with the normal columns and CRS, not an error, because that is a real spatial subset rather than a missing source.
+
+The bounding-box read exists because the national GeoPackage has 813,627 features and is about 5.9 GB, while a candidate site only needs the flood polygons near it. In the real smoke check, loading the flood zones for a site dropped from about 224.9 s for the full source to about 0.05 s for the 8 features in the site's bounding box, with the analysis itself about 0.01 s. The intended app call is `load_flood_zones(path, bbox=tuple(site.total_bounds))`.
+
+### How overlap is measured
+
+`calculate_flood_zone_overlap()` takes the validated site and the Flood Zones layer (usually the bounding-box subset). Both must be `GeoDataFrames` in `EPSG:27700`, the site must have one row, and the flood-zones layer must have `flood_zone`, `flood_source` and `origin`. Inputs are not reprojected or repaired.
+
+A bounding-box subset can contain polygons whose boxes overlap the site but whose actual geometry does not, so the analysis still takes the real intersection of each candidate with the site and keeps only positive-area results. A site that only touches a flood-zone boundary line or corner is not an overlap.
+
+### Per-zone results
+
+`zones` has one row per overlapping `flood_zone`, with `flood_zone`, `intersection_area_m2`, `intersection_area_ha`, `site_pct`, `flood_sources`, `origins` and the clipped `geometry`. For each zone the clipped pieces are combined into one geometry before the area is measured. `flood_sources` and `origins` are comma-joined sorted lists of the distinct non-null `flood_source` and `origin` values on that zone's intersecting polygons; a combined value such as `river and sea` is kept whole, not split. Rows are sorted by area, largest first, then by zone.
+
+### Overall affected area
+
+The overall affected area is the area of the union of every kept clipped Flood Zone 2 and Flood Zone 3 piece. It is never the sum of the per-zone areas. In the current delivered data FZ2 and FZ3 do not overlap, so the sum and the union usually match, but the code unions defensively so it stays correct if that changes or if floating-point slivers appear.
+
+Hectares are square metres divided by 10,000. Percentages are against the site area. Values are returned as calculated, without rounding.
+
+An empty but valid local subset (a bounding box with no flood polygons in it) gives a genuine zero result: `has_flood_zone_overlap` is `False`, `zone_count` is `0`, `zones` is empty with the right columns and CRS, the areas and percentage are `0`, and the provenance tuples are empty.
+
+### Flood Zone meanings
+
+The source zone codes `FZ2` and `FZ3` are preserved as-is.
+
+- **Flood Zone 2** is the lower-probability outer band: 0.1%–1% annual probability from rivers, 0.1%–0.5% from the sea, plus accepted recorded flood outlines.
+- **Flood Zone 3** is the higher-probability mapped area: 1% or greater from rivers, 0.5% or greater from the sea. Flood Zone 3b (the functional floodplain) is included within Flood Zone 3 and not mapped separately.
+
+In the delivered dataset the FZ2 and FZ3 polygons behave as mutually exclusive bands rather than FZ3 sitting nested inside FZ2. The two zones together make up the full area at 0.1% or greater annual probability.
+
+Flood Zone 1 (less than 0.1% annual probability) is not supplied as geometry. The tool never creates a Flood Zone 1 geometry, result row or flag. When a site has no FZ2 or FZ3 overlap, presentation may say "No mapped Flood Zone 2 or 3 overlap in this dataset". It must not say the site is free from flood risk.
+
+### What this step does not do
+
+- no flood-risk score
+- no safe/unsafe conclusion
+- no planning-permission conclusion
+- no climate-change layer (the Flood Zones plus climate change dataset is separate and not used in this MVP)
+- no other flood sources such as surface water, groundwater or drainage
+- Flood Zones also ignore the benefit of flood defences (an Environment Agency property of the data)
+
+### Checking this
+
+`tests/test_flood_zones.py` covers the loader and the overlap function with small synthetic GeoPackages and geometries: valid load and exact schema/CRS/index, missing file, missing required column, wrong or missing CRS, null/empty/non-polygon geometry, an empty source, invalid geometry that warns but is left unchanged, allowed `FZ2`/`FZ3`, an unknown or null or empty `flood_zone` that raises, null `flood_source` and null `origin` allowed, `river and sea` preserved verbatim; a `bbox=None` full read, a bounding box selecting only nearby polygons, a bounding box with nothing nearby returning an empty normalised layer, analysis of that empty subset giving a genuine zero result, a bounding-box false positive that only touches the site boundary being dropped by the exact intersection, a bounding-box subset giving the same arithmetic as the full read, and missing source / wrong CRS / missing column still raising on the bounding-box path; a site inside FZ3, a site spanning disjoint FZ2 and FZ3, a constructed overlapping FZ2/FZ3 case where the headline union is less than the sum of the per-zone areas, overlapping same-zone polygons unioned rather than summed, a boundary touch excluded, a no-overlap zero result with exact schema and CRS, null flood sources excluded from the provenance, multi-source provenance retained, the hectare and percentage arithmetic, the result sorting, the exact result schema and CRS, the frozen dataclass, and the type, CRS, row and column guards. `scripts/check_flood_zones_overlap.py` runs the intended app workflow against the real GeoPackage: it reads the national feature count from metadata, reads one feature to pick a deterministic site, then loads only that site's bounding box and runs the overlap.

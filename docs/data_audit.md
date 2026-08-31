@@ -169,3 +169,56 @@ Implementation decisions from these findings:
 - Both inventories must already be in `EPSG:27700` and are not reprojected; the `area` and `perimeter` fields are not used for overlap calculations.
 - Invalid revised geometry is not repaired; the loader emits one warning with the count (69 on the current source) and leaves it unchanged. Invalid coverage geometry among the selected counties raises; invalid geometry outside them is ignored.
 - If the site needs one inventory side but that source is empty, the analysis raises rather than reporting a false zero.
+
+## Flood Zones — source findings
+
+These come from inspecting the local source and reading the supplied Product Description. They are facts about the data, not interpretation.
+
+- Publisher: Environment Agency.
+- Dataset: Flood Map for Planning – Flood Zones.
+- Analytical CRS: `EPSG:27700`.
+- Local source inspected on 31 August 2026.
+- Supporting Product Description published 30 June 2026.
+- 813,627 features; the GeoPackage is about 5.9 GB.
+- One layer: `Flood_Zones_2_3_Rivers_and_Sea`.
+- Source attribute columns: `origin`, `flood_zone`, `flood_source`.
+- `flood_zone` counts: `FZ2` 540,282; `FZ3` 273,345.
+- `flood_source` has 4,808 nulls and otherwise holds `river`, `sea`, `river and sea`, or `undefined`/`unknown`/`river / undefined` values; a single polygon can carry a combined source.
+- `origin` records data provenance such as `modelled`, `recorded`, `direct rainfall model` and `local evidence`, including combinations like `modelled and recorded`.
+- No stable source identifier is retained (only the GeoPackage `fid`, which is not kept).
+- Sampled real geometry was `MultiPolygon` with no null, empty or invalid geometry found; the real loader emitted no geometry warnings.
+
+### Zone definitions (from the Product Description)
+
+- Flood Zone 2:
+  - rivers: 0.1%–1% annual probability of flooding;
+  - sea: 0.1%–0.5% annual probability;
+  - also accepted recorded flood outlines.
+- Flood Zone 3:
+  - rivers: 1% annual probability or greater;
+  - sea: 0.5% annual probability or greater;
+  - Flood Zone 3b (functional floodplain) is not separately represented in this dataset.
+- Flood Zone 1 (less than 0.1% annual probability) is not supplied as geometry.
+- The zones ignore the benefit of flood defences (except where a defence increases the area at risk).
+
+### Observed geometry behaviour
+
+- Inspected areas showed `FZ2` and `FZ3` as mutually exclusive bands rather than `FZ3` nested inside `FZ2`.
+- Sampled within-zone geometry showed no material overlap.
+- The implementation still unions geometry defensively rather than relying on this holding forever.
+
+### Limitations
+
+- Indicates river and sea flood risk for planning rather than individual-property risk.
+- Other flood sources (surface water, groundwater, drainage, infrastructure failure) are not represented.
+- Not all rivers are mapped; absence of a mapped zone is not proof of no flood risk.
+- Some locations retain the previous November 2023 Flood Zone data pending improvements.
+- Climate-change data is a separate dataset and is not used in this MVP.
+
+Implementation decisions from these findings:
+
+- `load_flood_zones()` keeps `flood_zone`, `flood_source` and `origin` plus geometry; `flood_zone` must be `FZ2` or `FZ3`, and `flood_source`/`origin` are preserved verbatim (nulls allowed) with no fixed vocabulary check.
+- The source must be `EPSG:27700` and is not reprojected; invalid geometry is not repaired (one warning with the count, none on the current source).
+- The loader takes an optional bounding box; the app reads only the polygons in a site's bounding box via the GeoPackage spatial index, and a valid empty subset returns an empty layer rather than raising. A truly empty national source (no bounding box) still raises.
+- Per-zone and overall affected areas use unioned clipped geometry; the headline is the union across all FZ2/FZ3 clips, never `FZ2 + FZ3`.
+- No Flood Zone 1 geometry, row or flag is created; a no-overlap result is reported as no mapped Flood Zone 2 or 3 overlap in this dataset, not as an absence of flood risk.
