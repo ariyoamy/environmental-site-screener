@@ -1,5 +1,4 @@
-``` markdown
-# Project Overview — Environmental Site Screening Tool
+# Project Overview: Environmental Site Screener
 
 ## 1. Project Idea
 
@@ -57,18 +56,17 @@ The user should be able to understand both **what was found** and **where the re
 
 The intended product scope is **England**.
 
-The underlying environmental datasets are generally national, meaning the application should ideally accept a candidate polygon anywhere in England.
-
-Demonstration sites can be limited to a smaller number of example locations if required for performance or presentation.
+The underlying environmental datasets are generally national, meaning the application should accept a candidate polygon anywhere in England. As built, the application checks that the candidate site is fully inside England before screening, because the datasets stop at the border and a site outside England would otherwise screen as falsely clear. Sites in Wales, Scotland or across the border are shown on the map but not screened.
 
 ### Input
 
 The MVP analyses **one candidate site polygon at a time**.
 
-Possible input methods:
+As built, the candidate site can be provided in three ways:
 
-- a supplied demonstration site; and/or
-- an uploaded GeoJSON site boundary.
+- one of five built-in demonstration sites;
+- an uploaded GeoJSON file with a single `Polygon` or `MultiPolygon` feature;
+- a rectangle defined by drawing and resizing it on a small map, or by typing coordinates.
 
 ### Environmental Layers
 
@@ -226,4 +224,3 @@ If the project starts becoming complicated, return to this:
 > **Build a clear, credible geospatial tool that takes a proposed development site in England, checks it against authoritative environmental spatial data, and shows the user which mapped environmental issues may need further investigation.**
 
 Everything in the GitHub repository should ultimately support that objective.
-```

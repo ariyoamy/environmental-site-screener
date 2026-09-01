@@ -2,9 +2,10 @@
 
 This file explains the methods I have implemented so far.
 
-At the moment, the code covers seven parts of the screening workflow:
+At the moment, the code covers these parts of the screening workflow:
 
 - checking that a candidate site boundary is usable
+- checking that the candidate site is inside the England product scope
 - calculating overlap between a candidate site and SSSI polygons
 - finding the nearest SSSI to a candidate site
 - checking whether a candidate site falls within a mapped SSSI Impact Risk Zone
@@ -90,6 +91,28 @@ The function works on a copy. The caller's original `GeoDataFrame` is not change
 ### Checking this
 
 `tests/test_site.py` covers this with small synthetic geometries: a valid polygon and multipolygon, reprojection from `EPSG:4326`, missing CRS, empty and multi-row inputs, null and empty geometry, non-polygon geometry, and a self-intersecting polygon that is repaired with a warning. It also checks that attributes are kept and the input object is not mutated.
+
+## England product-scope check
+
+`validate_site()` stays geography-agnostic on purpose, so the England check is a separate step in `england.py` that the application runs after validation and before screening.
+
+`load_england_boundary()` builds a single England polygon from the OS Boundary-Line ceremonial counties layer (the same file used for the revised Ancient Woodland coverage). Boundary-Line covers Great Britain, so England is taken from an explicit allow-list of 48 English ceremonial-county `NAME` values held in the code as `ENGLAND_CEREMONIAL_COUNTIES`. That is 91 Boundary-Line rows minus 35 Scottish and 8 Welsh preserved counties, and 48 is the known count of English ceremonial counties, which the loader asserts. England is not inferred from environmental-data extent, and the one invalid geometry in the source (`Shetland`) is Scottish and excluded, so no authoritative geometry is repaired.
+
+`classify_site_england_eligibility()` compares the validated site, in `EPSG:27700`, to that England polygon and returns one of:
+
+- `eligible`: the site is fully within England. A site is allowed to sit up to `1.0` m² outside the generalised boundary, a numerical tolerance for vertex precision at the coast and at exact borders, not a spatial buffer.
+- `crosses`: the site intersects England but more than the tolerance lies outside.
+- `outside`: the site does not touch England at all.
+
+Only an `eligible` site is passed to `screen_site()`. The site is never clipped to England and the English part is never screened on its own. A `crosses` or `outside` site is shown on the map with a clear message and the screening action is disabled.
+
+### Why this is in the app layer
+
+The five environmental datasets are England-only. Outside their extent every theme would return a genuine-looking zero and a nearest-SSSI distance measured to the nearest English SSSI across the border. That reads as "no constraints" rather than "no data", so the app blocks it rather than presenting it.
+
+### Checking this
+
+`tests/test_app_qa.py` covers the boundary build (one valid `EPSG:27700` polygon, all 48 counties present) and the classifier: England fixtures and all five demo sites eligible, a Wales site and an outside-Great-Britain site `outside`, a synthetic England/Wales border-crossing rectangle `crosses`, and the application disabling screening and hiding any stale result for an ineligible site.
 
 ## SSSI data
 
