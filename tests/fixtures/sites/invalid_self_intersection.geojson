@@ -1,0 +1,21 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "site_ref": "QA-BOWTIE", "note": "self-intersecting bow-tie; exercises validate_site repair" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-1.312, 51.400],
+            [-1.312, 51.403],
+            [-1.308, 51.400],
+            [-1.308, 51.403],
+            [-1.312, 51.400]
+          ]
+        ]
+      }
+    }
+  ]
+}

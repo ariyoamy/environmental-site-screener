@@ -1,0 +1,10 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "site_ref": "QA-EMPTY-GEOM" },
+      "geometry": { "type": "Polygon", "coordinates": [] }
+    }
+  ]
+}

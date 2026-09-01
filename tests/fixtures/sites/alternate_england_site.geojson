@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "site_ref": "QA-ENGLAND-2", "note": "near York, North Yorkshire - a clearly different region from the Suffolk demo" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [[-1.082, 53.958], [-1.082, 53.961], [-1.078, 53.961], [-1.078, 53.958], [-1.082, 53.958]]
+        ]
+      }
+    }
+  ]
+}

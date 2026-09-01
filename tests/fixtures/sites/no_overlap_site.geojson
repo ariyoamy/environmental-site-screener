@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "site_ref": "QA-NO-OVERLAP", "note": "arable Lincolnshire Wolds, chosen to give few mapped results; verify with scripts/check_app_scenarios.py" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [[-0.202, 53.350], [-0.202, 53.352], [-0.198, 53.352], [-0.198, 53.350], [-0.202, 53.350]]
+        ]
+      }
+    }
+  ]
+}

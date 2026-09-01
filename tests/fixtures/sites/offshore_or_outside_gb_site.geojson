@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "site_ref": "QA-OUTSIDE-GB", "note": "near Dublin, Ireland - clearly outside Great Britain and the England product scope" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [[-6.262, 53.348], [-6.262, 53.351], [-6.258, 53.351], [-6.258, 53.348], [-6.262, 53.348]]
+        ]
+      }
+    }
+  ]
+}

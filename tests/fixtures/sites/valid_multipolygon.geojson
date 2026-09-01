@@ -1,0 +1,32 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "site_ref": "QA-MULTI", "note": "one feature, two parts, near Newbury" },
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [
+          [
+            [
+              [-1.312, 51.400],
+              [-1.312, 51.402],
+              [-1.310, 51.402],
+              [-1.310, 51.400],
+              [-1.312, 51.400]
+            ]
+          ],
+          [
+            [
+              [-1.308, 51.401],
+              [-1.308, 51.403],
+              [-1.306, 51.403],
+              [-1.306, 51.401],
+              [-1.308, 51.401]
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

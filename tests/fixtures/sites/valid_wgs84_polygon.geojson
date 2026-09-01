@@ -1,0 +1,21 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "site_ref": "QA-WGS84", "note": "small square near Newbury, England" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-1.312, 51.400],
+            [-1.312, 51.403],
+            [-1.308, 51.403],
+            [-1.308, 51.400],
+            [-1.312, 51.400]
+          ]
+        ]
+      }
+    }
+  ]
+}

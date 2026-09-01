@@ -13,10 +13,8 @@ import re
 import geopandas as gpd
 import pydeck as pdk
 import pytest
-from shapely.geometry import Polygon
 
-from environmental_site_screener import screening
-from environmental_site_screener.ancient_woodland import AncientWoodlandOverlapResult
+from environmental_site_screener import app_map
 from environmental_site_screener.app_data import (
     DEMO_SITE_LABEL,
     default_data_sources,
@@ -27,6 +25,7 @@ from environmental_site_screener.app_data import (
 from environmental_site_screener.app_format import (
     THEME_DISPLAY,
     THEME_KEYS,
+    THEME_MARKER_RGB,
     build_theme_cards,
     build_theme_detail,
     format_area_ha,
@@ -35,20 +34,25 @@ from environmental_site_screener.app_format import (
     theme_help,
 )
 from environmental_site_screener.app_map import (
+    available_layer_control_keys,
+    available_layer_controls,
     build_deck,
     build_map_layers,
     legend_entries,
     view_state_for_bounds,
 )
-from environmental_site_screener.distance import NearestSssiResult
-from environmental_site_screener.flood_zones import FloodZoneOverlapResult
-from environmental_site_screener.priority_habitats import PriorityHabitatOverlapResult
-from environmental_site_screener.screening import ScreeningResult, load_screening_datasets
+from environmental_site_screener.screening import load_screening_datasets
 from environmental_site_screener.site import validate_site
-from environmental_site_screener.sssi_irz import SssiIrzContextResult
-from environmental_site_screener.overlap import SssiOverlapResult
-
-CRS = "EPSG:27700"
+from synthetic_results import (
+    mk_aw,
+    mk_fz,
+    mk_irz,
+    mk_nearest,
+    mk_phi,
+    mk_result,
+    mk_sssi,
+    rect as _rect,
+)
 
 # Language that would imply a regulatory verdict or a screening score. This is
 # deliberately about verdict phrasing ("risk score", "low risk", "pass/fail",
@@ -61,236 +65,6 @@ _BANNED = re.compile(
     re.IGNORECASE,
 )
 
-
-def _rect(xmin, ymin, xmax, ymax):
-    return Polygon(
-        [(xmin, ymin), (xmin, ymax), (xmax, ymax), (xmax, ymin), (xmin, ymin)]
-    )
-
-
-def _empty_gdf(columns):
-    return gpd.GeoDataFrame(
-        {c: [] for c in columns if c != "geometry"}, geometry=[], crs=CRS
-    )
-
-
-# --------------------------------------------------------------------------- #
-# synthetic backend result objects
-# --------------------------------------------------------------------------- #
-
-
-def mk_sssi(*, has_overlap=True, area_ha=0.3838, pct=48.34, feature_count=1):
-    cols = [
-        "ref_code",
-        "name",
-        "measure",
-        "intersection_area_m2",
-        "intersection_area_ha",
-        "geometry",
-    ]
-    if has_overlap:
-        feats = gpd.GeoDataFrame(
-            {
-                "ref_code": ["S1"],
-                "name": ["Test SSSI"],
-                "measure": ["Lowland fen"],
-                "intersection_area_m2": [area_ha * 10_000],
-                "intersection_area_ha": [area_ha],
-            },
-            geometry=[_rect(0, 0, 62, 62)],
-            crs=CRS,
-        )
-    else:
-        feats = _empty_gdf(cols)
-    return SssiOverlapResult(
-        has_overlap=has_overlap,
-        feature_count=feature_count if has_overlap else 0,
-        features=feats,
-        site_area_m2=10_000.0,
-        affected_area_m2=area_ha * 10_000 if has_overlap else 0.0,
-        affected_area_ha=area_ha if has_overlap else 0.0,
-        affected_pct=pct if has_overlap else 0.0,
-    )
-
-
-def mk_nearest(*, distance_m=2659.06):
-    feats = gpd.GeoDataFrame(
-        {"ref_code": ["S9"], "name": ["Far SSSI"], "measure": ["Broadleaved woodland"]},
-        geometry=[_rect(5_000, 5_000, 5_100, 5_100)],
-        crs=CRS,
-    )
-    return NearestSssiResult(
-        distance_m=distance_m,
-        distance_km=distance_m / 1_000,
-        feature_count=1,
-        features=feats,
-    )
-
-
-def mk_irz(*, zone_count=2):
-    cols = ["irzurl", "irz_code", "geometry"]
-    if zone_count:
-        urls = [f"https://example.test/?irzcode={i:013d}" for i in range(zone_count)]
-        zones = gpd.GeoDataFrame(
-            {"irzurl": urls, "irz_code": [f"{i:013d}" for i in range(zone_count)]},
-            geometry=[_rect(0, 0, 80, 80) for _ in range(zone_count)],
-            crs=CRS,
-        )
-        advice = tuple(sorted(set(urls)))
-    else:
-        zones = _empty_gdf(cols)
-        advice = ()
-    return SssiIrzContextResult(
-        has_irz_context=bool(zone_count),
-        zone_count=zone_count,
-        zones=zones,
-        advice_urls=advice,
-    )
-
-
-def mk_phi(*, has=True, area_ha=2.5688, pct=64.22, habitat_count=2, with_context=False):
-    hcols = [
-        "habitat_code",
-        "habitat_name",
-        "intersection_area_m2",
-        "intersection_area_ha",
-        "geometry",
-    ]
-    ccols = ["uid", "context_codes", "context_habitats", "primsource", "geometry"]
-    if has:
-        habitats = gpd.GeoDataFrame(
-            {
-                "habitat_code": ["DWOOD", "LMEAD"][:habitat_count],
-                "habitat_name": ["Deciduous woodland", "Lowland meadow"][:habitat_count],
-                "intersection_area_m2": [area_ha * 10_000, 1_000.0][:habitat_count],
-                "intersection_area_ha": [area_ha, 0.1][:habitat_count],
-            },
-            geometry=[_rect(0, 0, 50, 50), _rect(10, 10, 20, 20)][:habitat_count],
-            crs=CRS,
-        )
-    else:
-        habitats = _empty_gdf(hcols)
-    if with_context:
-        context = gpd.GeoDataFrame(
-            {
-                "uid": ["PHI9"],
-                "context_codes": ["GMOOR"],
-                "context_habitats": ["Grass moorland"],
-                "primsource": ["test survey"],
-            },
-            geometry=[_rect(0, 0, 30, 30)],
-            crs=CRS,
-        )
-    else:
-        context = _empty_gdf(ccols)
-    return PriorityHabitatOverlapResult(
-        has_priority_overlap=has,
-        habitat_count=habitat_count if has else 0,
-        habitats=habitats,
-        context=context,
-        site_area_m2=10_000.0,
-        affected_area_m2=area_ha * 10_000 if has else 0.0,
-        affected_area_ha=area_ha if has else 0.0,
-        affected_pct=pct if has else 0.0,
-    )
-
-
-def mk_aw(*, has=True, area_ha=1.0961, pct=27.40, feature_count=1):
-    cols = [
-        "inventory",
-        "category_code",
-        "category_name",
-        "intersection_area_m2",
-        "intersection_area_ha",
-        "geometry",
-    ]
-    if has:
-        feats = gpd.GeoDataFrame(
-            {
-                "inventory": ["revised"],
-                "category_code": ["ASNW"],
-                "category_name": ["Ancient & Semi-Natural Woodland"],
-                "intersection_area_m2": [area_ha * 10_000],
-                "intersection_area_ha": [area_ha],
-            },
-            geometry=[_rect(0, 0, 40, 40)],
-            crs=CRS,
-        )
-    else:
-        feats = _empty_gdf(cols)
-    return AncientWoodlandOverlapResult(
-        has_overlap=has,
-        feature_count=feature_count if has else 0,
-        features=feats,
-        site_area_m2=10_000.0,
-        revised_coverage_area_m2=10_000.0,
-        fallback_area_m2=0.0,
-        affected_area_m2=area_ha * 10_000 if has else 0.0,
-        affected_area_ha=area_ha if has else 0.0,
-        affected_pct=pct if has else 0.0,
-    )
-
-
-def mk_fz(*, has=True, area_ha=3.3739, pct=84.35, zones_present=("FZ2", "FZ3")):
-    cols = [
-        "flood_zone",
-        "intersection_area_m2",
-        "intersection_area_ha",
-        "site_pct",
-        "flood_sources",
-        "origins",
-        "geometry",
-    ]
-    if has:
-        n = len(zones_present)
-        zones = gpd.GeoDataFrame(
-            {
-                "flood_zone": list(zones_present),
-                "intersection_area_m2": [area_ha * 10_000 / n] * n,
-                "intersection_area_ha": [area_ha / n] * n,
-                "site_pct": [pct / n] * n,
-                "flood_sources": ["river"] * n,
-                "origins": ["modelled"] * n,
-            },
-            geometry=[_rect(0, 0, 50, 50) for _ in range(n)],
-            crs=CRS,
-        )
-        sources, origins = ("river",), ("modelled",)
-    else:
-        zones = _empty_gdf(cols)
-        sources, origins = (), ()
-    return FloodZoneOverlapResult(
-        has_flood_zone_overlap=has,
-        zone_count=len(zones_present) if has else 0,
-        zones=zones,
-        site_area_m2=10_000.0,
-        affected_area_m2=area_ha * 10_000 if has else 0.0,
-        affected_area_ha=area_ha if has else 0.0,
-        affected_pct=pct if has else 0.0,
-        flood_sources=sources,
-        origins=origins,
-    )
-
-
-def mk_result(*, sssi=None, nearest=..., irz=None, phi=None, aw=None, fz=None):
-    sssi = sssi if sssi is not None else mk_sssi(has_overlap=False)
-    if nearest is ...:
-        nearest = None if sssi.has_overlap else mk_nearest()
-    irz = irz if irz is not None else mk_irz(zone_count=2)
-    phi = phi if phi is not None else mk_phi(has=True)
-    aw = aw if aw is not None else mk_aw(has=True)
-    fz = fz if fz is not None else mk_fz(has=True)
-    summary = screening._build_summary(sssi, nearest, irz, phi, aw, fz)
-    return ScreeningResult(
-        site=demo_site(),
-        sssi=sssi,
-        nearest_sssi=nearest,
-        sssi_irz=irz,
-        priority_habitats=phi,
-        ancient_woodland=aw,
-        flood_zones=fz,
-        summary=summary,
-    )
 
 
 def _all_card_text(cards):
@@ -493,6 +267,175 @@ def test_view_state_zoom_is_clamped_and_centred():
     assert 4.0 <= view.zoom <= 16.5
     assert -0.1 < view.longitude < -0.09
     assert 52.0 < view.latitude < 52.01
+
+
+# --------------------------------------------------------------------------- #
+# layer visibility control
+# --------------------------------------------------------------------------- #
+
+
+def _ids(layers):
+    return {layer.id for layer in layers}
+
+
+def test_visible_none_shows_every_present_layer():
+    result = mk_result(sssi=mk_sssi(has_overlap=True))
+    all_ids = _ids(build_map_layers(result))
+    keys = set(available_layer_control_keys(result))
+
+    assert _ids(build_map_layers(result, visible=keys)) == all_ids
+
+
+def test_visible_subset_shows_only_selected_env_layers_plus_site():
+    result = mk_result(sssi=mk_sssi(has_overlap=True))
+
+    assert _ids(build_map_layers(result, visible={"priority_habitats"})) == {"phi", "site"}
+    assert _ids(build_map_layers(result, visible={"irz", "ancient_woodland"})) == {
+        "irz",
+        "aw",
+        "site",
+    }
+
+
+def test_site_only_when_visible_is_empty():
+    result = mk_result(sssi=mk_sssi(has_overlap=True))
+    layers = build_map_layers(result, visible=set())
+
+    assert [layer.id for layer in layers] == ["site"]
+    assert layers[0].pickable is False
+
+
+def test_show_all_restores_every_available_result_layer():
+    result = mk_result(sssi=mk_sssi(has_overlap=True))
+    every = set(available_layer_control_keys(result))
+
+    assert _ids(build_map_layers(result, visible=every)) == _ids(build_map_layers(result))
+
+
+def test_flood_zone_2_and_3_are_independent_controls():
+    result = mk_result(fz=mk_fz(has=True, zones_present=("FZ2", "FZ3")))
+
+    assert _ids(build_map_layers(result, visible={"flood_zone_3"})) == {"fz-fz3", "site"}
+    assert _ids(build_map_layers(result, visible={"flood_zone_2"})) == {"fz-fz2", "site"}
+
+
+def test_sssi_control_covers_both_overlap_and_nearest_style_keys():
+    nearest_result = mk_result(sssi=mk_sssi(has_overlap=False), nearest=mk_nearest())
+    assert _ids(build_map_layers(nearest_result, visible={"sssi"})) == {
+        "sssi-nearest",
+        "site",
+    }
+    overlap_result = mk_result(sssi=mk_sssi(has_overlap=True))
+    assert "sssi" in _ids(build_map_layers(overlap_result, visible={"sssi"}))
+
+
+def test_layer_visibility_does_not_alter_the_result_object():
+    result = mk_result(sssi=mk_sssi(has_overlap=True))
+    before = (
+        result.priority_habitats.affected_area_ha,
+        result.flood_zones.affected_pct,
+        result.sssi.feature_count,
+        result.ancient_woodland.has_overlap,
+    )
+
+    build_map_layers(result, visible={"priority_habitats"})
+    build_map_layers(result, visible=set())
+    build_map_layers(result, visible=None)
+
+    after = (
+        result.priority_habitats.affected_area_ha,
+        result.flood_zones.affected_pct,
+        result.sssi.feature_count,
+        result.ancient_woodland.has_overlap,
+    )
+    assert before == after
+
+
+def test_available_layer_controls_lists_only_present_layers_with_colour():
+    result = mk_result(sssi=mk_sssi(has_overlap=True), aw=mk_aw(has=False))
+    controls = available_layer_controls(result)
+    keys = [key for key, _, _ in controls]
+
+    assert "ancient_woodland" not in keys
+    assert {"sssi", "irz", "priority_habitats", "flood_zone_2", "flood_zone_3"} <= set(keys)
+    for key, label, rgb in controls:
+        assert isinstance(label, str) and label
+        assert len(rgb) == 3 and all(isinstance(component, int) for component in rgb)
+
+
+def test_legend_reflects_the_visible_layer_selection():
+    result = mk_result(sssi=mk_sssi(has_overlap=True))
+    labels = [label for label, _ in legend_entries(result, visible={"priority_habitats"})]
+
+    assert labels[0] == "Candidate site"  # site always in the legend
+    assert "Priority habitat" in labels
+    assert "SSSI (overlap)" not in labels
+
+
+# --------------------------------------------------------------------------- #
+# hover highlight + tooltips
+# --------------------------------------------------------------------------- #
+
+
+def test_environmental_layers_have_hover_highlight_and_site_does_not():
+    layers = {layer.id: layer for layer in build_map_layers(mk_result(sssi=mk_sssi(has_overlap=True)))}
+
+    for layer_id in ("sssi", "irz", "phi", "aw", "fz-fz2", "fz-fz3"):
+        assert getattr(layers[layer_id], "auto_highlight", False) is True
+        assert layers[layer_id].pickable is True
+    assert getattr(layers["site"], "auto_highlight", True) is False
+    assert layers["site"].pickable is False
+
+
+def test_tooltips_are_concise_title_plus_short_body():
+    layers = {layer.id: layer for layer in build_map_layers(mk_result(sssi=mk_sssi(has_overlap=True)))}
+
+    phi = layers["phi"].data["features"][0]["properties"]
+    assert phi["tt_title"] == "Priority Habitat"
+    assert "Deciduous woodland" in phi["tooltip"]
+    assert "ha overlap" in phi["tooltip"]
+    assert phi["tooltip"].count("<br/>") <= 1  # title line + at most two body lines
+
+    fz = layers["fz-fz3"].data["features"][0]["properties"]
+    assert fz["tt_title"] == "Flood Zone 3"
+    assert "% of site" in fz["tooltip"]
+
+
+def test_tooltip_template_and_style_are_width_capped():
+    tooltip = app_map.TOOLTIP
+    assert tooltip["html"] == "<b>{tt_title}</b><br/>{tooltip}"
+    assert tooltip["style"]["whiteSpace"] == "normal"
+    assert "maxWidth" in tooltip["style"]
+
+
+# --------------------------------------------------------------------------- #
+# card / legend / map colour consistency
+# --------------------------------------------------------------------------- #
+
+
+def test_theme_marker_rgb_matches_map_layer_styles():
+    style_for_theme = {
+        "sssi": "sssi",
+        "irz": "irz",
+        "priority_habitats": "priority_habitats",
+        "ancient_woodland": "ancient_woodland",
+        "flood_zones": "flood_zone_3",
+    }
+    assert set(THEME_MARKER_RGB) == set(THEME_KEYS)
+    for theme_key, style_key in style_for_theme.items():
+        expected = tuple(int(c) for c in app_map.LAYER_STYLES[style_key]["fill"][:3])
+        assert THEME_MARKER_RGB[theme_key] == expected
+
+
+def test_cards_carry_marker_rgb_matching_the_theme_colour():
+    cards = build_theme_cards(mk_result(sssi=mk_sssi(has_overlap=True)))
+    by_theme = {card.theme: card for card in cards}
+
+    assert by_theme["Priority Habitats"].marker_rgb == THEME_MARKER_RGB["priority_habitats"]
+    assert by_theme["Flood Zones"].marker_rgb == THEME_MARKER_RGB["flood_zones"]
+    for card in cards:
+        assert len(card.marker_rgb) == 3
+        assert all(isinstance(component, int) for component in card.marker_rgb)
 
 
 # --------------------------------------------------------------------------- #

@@ -1,0 +1,22 @@
+{
+  "type": "FeatureCollection",
+  "crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:EPSG::27700" } },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "site_ref": "QA-BNG", "note": "200 m square, British National Grid, eastern England" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [566000.0, 196000.0],
+            [566000.0, 196200.0],
+            [566200.0, 196200.0],
+            [566200.0, 196000.0],
+            [566000.0, 196000.0]
+          ]
+        ]
+      }
+    }
+  ]
+}

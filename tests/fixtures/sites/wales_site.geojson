@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "site_ref": "QA-WALES", "note": "near Aberystwyth, Ceredigion - clearly in Wales, outside the England product scope" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [[-4.082, 52.408], [-4.082, 52.411], [-4.078, 52.411], [-4.078, 52.408], [-4.082, 52.408]]
+        ]
+      }
+    }
+  ]
+}

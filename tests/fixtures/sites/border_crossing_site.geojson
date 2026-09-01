@@ -1,0 +1,24 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "site_ref": "QA-BORDER-CROSS",
+        "note": "straddles the England (Herefordshire) / Wales (Powys) boundary - must be rejected from screening as partly outside England"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-3.072883, 52.035513],
+            [-3.073529, 52.062480],
+            [-3.117280, 52.062073],
+            [-3.116608, 52.035107],
+            [-3.072883, 52.035513]
+          ]
+        ]
+      }
+    }
+  ]
+}
