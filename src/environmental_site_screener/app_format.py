@@ -73,6 +73,17 @@ TONE_OVERLAP = "overlap"
 TONE_CONTEXT = "context"
 TONE_NONE = "none"
 
+# Representative map-layer colour per card theme, kept in step with
+# ``app_map.LAYER_STYLES`` (a helper test asserts they still match). Flood Zones
+# uses the deeper flood blue for its card even though the map splits FZ2 / FZ3.
+THEME_MARKER_RGB = {
+    "sssi": (39, 118, 92),
+    "irz": (123, 118, 168),
+    "priority_habitats": (124, 160, 74),
+    "ancient_woodland": (178, 138, 68),
+    "flood_zones": (50, 120, 178),
+}
+
 _GRID = "British National Grid (EPSG:27700)"
 
 
@@ -153,6 +164,8 @@ def _first_value(gdf, column, default=""):
 class ThemeCard:
     """A compact per-theme result card.
 
+    ``marker_rgb`` is the theme's representative map/legend colour (see
+    :data:`THEME_MARKER_RGB`), so the card, legend and map share one colour.
     ``tone`` (``"overlap"`` / ``"context"`` / ``"none"``) controls visual
     emphasis only. ``primary_metric`` is the single number the card leads with
     for an overlap theme (the percentage of the site affected) and is ``None``
@@ -161,6 +174,7 @@ class ThemeCard:
     """
 
     theme: str
+    marker_rgb: tuple[int, int, int]
     tone: str
     state_label: str
     primary_metric: str | None
@@ -179,9 +193,10 @@ def build_theme_cards(result) -> list[ThemeCard]:
     ]
 
 
-def _overlap_card(theme, area_ha, pct, context_line) -> ThemeCard:
+def _overlap_card(theme_key, theme, area_ha, pct, context_line) -> ThemeCard:
     return ThemeCard(
         theme,
+        THEME_MARKER_RGB[theme_key],
         TONE_OVERLAP,
         "Mapped overlap",
         format_pct(pct),
@@ -194,6 +209,7 @@ def _sssi_card(result) -> ThemeCard:
     sssi = result.sssi
     if sssi.has_overlap:
         return _overlap_card(
+            "sssi",
             "SSSI",
             sssi.affected_area_ha,
             sssi.affected_pct,
@@ -205,7 +221,10 @@ def _sssi_card(result) -> ThemeCard:
         if nearest is not None
         else None
     )
-    return ThemeCard("SSSI", TONE_NONE, "No mapped overlap", None, secondary, None)
+    return ThemeCard(
+        "SSSI", THEME_MARKER_RGB["sssi"], TONE_NONE, "No mapped overlap", None,
+        secondary, None,
+    )
 
 
 def _irz_card(result) -> ThemeCard:
@@ -213,6 +232,7 @@ def _irz_card(result) -> ThemeCard:
     if irz.has_irz_context:
         return ThemeCard(
             "SSSI Impact Risk Zone",
+            THEME_MARKER_RGB["irz"],
             TONE_CONTEXT,
             "Context identified",
             None,
@@ -220,7 +240,8 @@ def _irz_card(result) -> ThemeCard:
             _count(irz.zone_count, "intersecting zone", "intersecting zones"),
         )
     return ThemeCard(
-        "SSSI Impact Risk Zone", TONE_CONTEXT, "No IRZ context", None, None, None
+        "SSSI Impact Risk Zone", THEME_MARKER_RGB["irz"], TONE_CONTEXT,
+        "No IRZ context", None, None, None,
     )
 
 
@@ -228,6 +249,7 @@ def _priority_habitats_card(result) -> ThemeCard:
     phi = result.priority_habitats
     if phi.has_priority_overlap:
         return _overlap_card(
+            "priority_habitats",
             "Priority Habitats",
             phi.affected_area_ha,
             phi.affected_pct,
@@ -237,7 +259,8 @@ def _priority_habitats_card(result) -> ThemeCard:
         "Context habitat mapped (not priority)" if len(phi.context) > 0 else None
     )
     return ThemeCard(
-        "Priority Habitats", TONE_NONE, "No mapped overlap", None, None, context_line
+        "Priority Habitats", THEME_MARKER_RGB["priority_habitats"], TONE_NONE,
+        "No mapped overlap", None, None, context_line,
     )
 
 
@@ -251,13 +274,15 @@ def _ancient_woodland_card(result) -> ThemeCard:
         if inventories:
             context_line += " · " + " + ".join(inventories)
         return _overlap_card(
+            "ancient_woodland",
             "Ancient Woodland",
             woodland.affected_area_ha,
             woodland.affected_pct,
             context_line,
         )
     return ThemeCard(
-        "Ancient Woodland", TONE_NONE, "No mapped overlap", None, None, None
+        "Ancient Woodland", THEME_MARKER_RGB["ancient_woodland"], TONE_NONE,
+        "No mapped overlap", None, None, None,
     )
 
 
@@ -266,15 +291,116 @@ def _flood_zones_card(result) -> ThemeCard:
     if flood.has_flood_zone_overlap:
         zones = " + ".join(sorted({str(z) for z in flood.zones["flood_zone"]}))
         return _overlap_card(
-            "Flood Zones", flood.affected_area_ha, flood.affected_pct, zones or None
+            "flood_zones",
+            "Flood Zones",
+            flood.affected_area_ha,
+            flood.affected_pct,
+            zones or None,
         )
     return ThemeCard(
         "Flood Zones",
+        THEME_MARKER_RGB["flood_zones"],
         TONE_NONE,
         "No mapped overlap",
         None,
         None,
         "No mapped Flood Zone 2 or 3",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# "Mapped overlap by theme" - four independent percentage bars
+# --------------------------------------------------------------------------- #
+
+# Themes for which a "percentage of the candidate site" figure is meaningful.
+# SSSI Impact Risk Zones are deliberately excluded: they are contextual, not an
+# area overlap, so they are shown as a separate count, never as a bar.
+_OVERLAP_BAR_THEMES = (
+    ("sssi", "SSSI"),
+    ("priority_habitats", "Priority Habitats"),
+    ("ancient_woodland", "Ancient Woodland"),
+    ("flood_zones", "Flood Zones"),
+)
+
+_OVERLAP_NOTE = (
+    "Themes can overlap each other, so these percentages are independent and "
+    "should not be added together."
+)
+
+
+@dataclass(frozen=True)
+class OverlapBar:
+    """One theme's independent percentage of the candidate site."""
+
+    theme: str
+    theme_key: str
+    marker_rgb: tuple[int, int, int]
+    pct: float
+    pct_label: str
+    fill_fraction: float  # 0..1 bar width; a non-zero overlap always shows a sliver
+
+
+@dataclass(frozen=True)
+class OverlapSummary:
+    """View-model for the compact "Mapped overlap by theme" panel.
+
+    ``bars`` are the four area-overlap themes (never IRZ). ``irz_label`` is the
+    contextual-zone count shown as plain text beside the bars. ``note`` is the
+    required non-additivity caveat. Nothing here sums, scores or ranks.
+    """
+
+    bars: tuple[OverlapBar, ...]
+    irz_present: bool
+    irz_label: str
+    note: str
+
+
+def _overlap_pct(has_overlap: bool, pct: float) -> float:
+    if not has_overlap or pct is None or (isinstance(pct, float) and math.isnan(pct)):
+        return 0.0
+    return max(0.0, float(pct))
+
+
+def build_overlap_summary(result) -> OverlapSummary:
+    """Build the four independent overlap bars plus the IRZ context line."""
+    values = {
+        "sssi": _overlap_pct(result.sssi.has_overlap, result.sssi.affected_pct),
+        "priority_habitats": _overlap_pct(
+            result.priority_habitats.has_priority_overlap,
+            result.priority_habitats.affected_pct,
+        ),
+        "ancient_woodland": _overlap_pct(
+            result.ancient_woodland.has_overlap, result.ancient_woodland.affected_pct
+        ),
+        "flood_zones": _overlap_pct(
+            result.flood_zones.has_flood_zone_overlap, result.flood_zones.affected_pct
+        ),
+    }
+    bars = tuple(
+        OverlapBar(
+            theme=label,
+            theme_key=key,
+            marker_rgb=THEME_MARKER_RGB[key],
+            pct=values[key],
+            pct_label=format_pct(values[key]),
+            # keep a faint but visible sliver for any real overlap under ~2%
+            fill_fraction=(
+                0.0 if values[key] <= 0 else min(1.0, max(values[key] / 100.0, 0.02))
+            ),
+        )
+        for key, label in _OVERLAP_BAR_THEMES
+    )
+
+    irz = result.sssi_irz
+    if irz.has_irz_context:
+        irz_label = _count(irz.zone_count, "contextual zone", "contextual zones")
+    else:
+        irz_label = "No contextual zones"
+    return OverlapSummary(
+        bars=bars,
+        irz_present=irz.has_irz_context,
+        irz_label=irz_label,
+        note=_OVERLAP_NOTE,
     )
 
 

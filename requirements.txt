@@ -15,7 +15,14 @@ shapely==2.1.2
 six==1.17.0
 
 # User-facing app (Streamlit MVP). pydeck ships with Streamlit and is used
-# directly for the map, so it is pinned explicitly. Their own dependencies
-# (altair, pyarrow, tornado, ...) are resolved by pip.
+# directly for the result map, so it is pinned explicitly. Their own
+# dependencies (altair, pyarrow, tornado, ...) are resolved by pip.
 streamlit==1.62.0
 pydeck==0.9.3
+
+# Only for the optional "Define area -> Draw on map" candidate-site input: a
+# small Leaflet drawing surface that returns the drawn rectangle to Python. It
+# does not replace the PyDeck result map and does no spatial analysis. The app
+# degrades to coordinate entry if these are unavailable.
+streamlit-folium==0.27.4
+folium==0.20.0

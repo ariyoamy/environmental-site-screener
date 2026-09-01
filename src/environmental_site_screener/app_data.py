@@ -1,12 +1,16 @@
 """Pure input helpers for the Streamlit app.
 
 Nothing here imports Streamlit or PyDeck, so it stays unit-testable on its own.
-It covers three small jobs:
+It covers a few small jobs:
 
 * turning uploaded GeoJSON bytes into one candidate :class:`geopandas.GeoDataFrame`
   (left unvalidated - :func:`environmental_site_screener.site.validate_site` is
   still the single validation entry point);
-* a deterministic built-in demo site so the app runs without an upload;
+* a small gallery of deterministic built-in demo sites so the app runs, and
+  shows meaningfully different results, without an upload;
+* building a one-rectangle candidate site from typed bounding coordinates (the
+  "Define area" convenience input);
+* turning raw validation errors into plain-language messages for the UI;
 * resolving and checking the local raw-data source paths the screening backend
   needs.
 """
@@ -16,11 +20,12 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import box, shape
+from shapely.geometry import MultiPolygon, box, shape
 
 # --------------------------------------------------------------------------- #
 # Demo site
@@ -35,13 +40,287 @@ DEMO_SITE_BOUNDS = (565_147.0, 195_157.0, 565_347.0, 195_357.0)
 
 
 def demo_site() -> gpd.GeoDataFrame:
-    """Return the built-in demo candidate site (one polygon, EPSG:27700)."""
+    """Return the original built-in demo candidate site (one polygon, EPSG:27700).
+
+    This is the first entry of :func:`demo_gallery`, kept as a standalone helper
+    because tests and fixtures depend on its exact bounds.
+    """
     minx, miny, maxx, maxy = DEMO_SITE_BOUNDS
     return gpd.GeoDataFrame(
         {"site_name": [DEMO_SITE_LABEL]},
         geometry=[box(minx, miny, maxx, maxy)],
         crs="EPSG:27700",
     )
+
+
+# --------------------------------------------------------------------------- #
+# Demo gallery
+# --------------------------------------------------------------------------- #
+
+_DEMO_MARKER = "fictional demo screening boundary, not a real proposed development"
+
+
+@dataclass(frozen=True)
+class DemoSite:
+    """One deterministic example site for the app's demo gallery.
+
+    ``geometry`` is a Shapely geometry in ``crs``; :meth:`geodataframe` wraps it
+    the way an upload would arrive, so it flows through ``validate_site`` and the
+    England eligibility check unchanged. All demo sites are within England and are
+    clearly labelled as fictional.
+    """
+
+    key: str
+    label: str
+    blurb: str
+    geometry: object
+    crs: str = "EPSG:4326"
+
+    def geodataframe(self) -> gpd.GeoDataFrame:
+        return gpd.GeoDataFrame(
+            {"site_name": [f"{self.label} ({_DEMO_MARKER})"]},
+            geometry=[self.geometry],
+            crs=self.crs,
+        )
+
+
+def _multipolygon(*boxes: tuple[float, float, float, float]) -> MultiPolygon:
+    return MultiPolygon([box(*b) for b in boxes])
+
+
+# Five deterministic example sites, chosen (and checked against the real
+# datasets) to span clearly different screening outcomes rather than five
+# lookalike rectangles. Order is fixed; the first is the original demo site.
+DEMO_SITES: tuple[DemoSite, ...] = (
+    DemoSite(
+        key="suffolk_mixed",
+        label="Mixed constraints - Suffolk",
+        blurb="Priority habitat, ancient woodland and flood zone all present; nearest SSSI reported.",
+        geometry=box(*DEMO_SITE_BOUNDS),
+        crs="EPSG:27700",
+    ),
+    DemoSite(
+        key="cambridge_urban",
+        label="Urban mixed constraints - Cambridge",
+        blurb="Edge-of-city rectangle overlapping priority habitat and a flood zone; nearest SSSI reported.",
+        geometry=box(0.10000, 52.20000, 0.10900, 52.20600),
+    ),
+    DemoSite(
+        key="newbury_multipart",
+        label="Multi-part site - Newbury",
+        blurb="Two separate parcels forming one candidate site; overlaps an SSSI and a flood zone.",
+        geometry=_multipolygon(
+            (-1.312, 51.400, -1.310, 51.402),
+            (-1.308, 51.401, -1.306, 51.403),
+        ),
+    ),
+    DemoSite(
+        key="lincs_low",
+        label="Low constraint - Lincolnshire Wolds",
+        blurb="Arable farmland where several themes return no mapped overlap.",
+        geometry=box(-0.202, 53.350, -0.198, 53.352),
+    ),
+    DemoSite(
+        key="london_large",
+        label="Large-area screening - London",
+        blurb=(
+            "A deliberately large demonstration extent (~22,600 ha) - every theme "
+            "appears. It is not a real proposal and is far larger than a normal "
+            "development site; screening it takes noticeably longer."
+        ),
+        geometry=box(-0.23600, 51.44000, -0.01900, 51.57500),
+    ),
+)
+
+
+def demo_gallery() -> tuple[DemoSite, ...]:
+    """Return the fixed tuple of demo sites for the gallery selector."""
+    return DEMO_SITES
+
+
+def demo_site_by_key(key: str) -> DemoSite:
+    """Look up one demo site by its stable key."""
+    for site in DEMO_SITES:
+        if site.key == key:
+            return site
+    raise KeyError(f"unknown demo site key: {key!r}")
+
+
+# --------------------------------------------------------------------------- #
+# "Define area" convenience input
+# --------------------------------------------------------------------------- #
+
+
+def rectangle_site(
+    west: float, south: float, east: float, north: float, *, crs: str = "EPSG:4326"
+) -> gpd.GeoDataFrame:
+    """Build a one-rectangle candidate site from bounding coordinates.
+
+    The app's "Define area" option. The result is deliberately left unvalidated -
+    it still goes through :func:`environmental_site_screener.site.validate_site`
+    and the England eligibility check like any other candidate site.
+
+    Raises
+    ------
+    ValueError
+        If ``west >= east`` or ``south >= north`` (the message names the pair),
+        or if any bound is not finite.
+    """
+    bounds = {"west": west, "south": south, "east": east, "north": north}
+    for name, value in bounds.items():
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} coordinate is not a number: {value!r}") from exc
+        if numeric != numeric or numeric in (float("inf"), float("-inf")):
+            raise ValueError(f"{name} coordinate must be a finite number")
+    if float(west) >= float(east):
+        raise ValueError(
+            f"west ({west}) must be less than east ({east}) - check the coordinate order"
+        )
+    if float(south) >= float(north):
+        raise ValueError(
+            f"south ({south}) must be less than north ({north}) - check the coordinate order"
+        )
+    return gpd.GeoDataFrame(
+        {"site_name": ["Defined area"]},
+        geometry=[box(float(west), float(south), float(east), float(north))],
+        crs=crs,
+    )
+
+
+def rect_bounds_from_drawing(feature) -> tuple[float, float, float, float] | None:
+    """``(west, south, east, north)`` from a Leaflet/GeoJSON draw payload.
+
+    Accepts a GeoJSON ``Feature`` or a bare geometry ``dict`` (the shape
+    ``streamlit-folium`` returns for a drawn rectangle). Returns ``None`` - never
+    raises - for anything that is not a usable polygon ring: wrong type, missing
+    or short coordinates, non-finite numbers, or a degenerate (zero-width/height)
+    box. A usable result is still passed through :func:`rectangle_site` and the
+    normal validation path by the caller.
+    """
+    if isinstance(feature, Mapping) and isinstance(feature.get("geometry"), Mapping):
+        geom = feature["geometry"]
+    elif isinstance(feature, Mapping):
+        geom = feature
+    else:
+        return None
+
+    if geom.get("type") != "Polygon":
+        return None
+    rings = geom.get("coordinates") or []
+    if not rings or not rings[0]:
+        return None
+
+    xs: list[float] = []
+    ys: list[float] = []
+    for point in rings[0]:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            return None
+        try:
+            x = float(point[0])
+            y = float(point[1])
+        except (TypeError, ValueError):
+            return None
+        if x != x or y != y or x in (float("inf"), float("-inf")) or y in (
+            float("inf"),
+            float("-inf"),
+        ):
+            return None
+        xs.append(x)
+        ys.append(y)
+
+    if len(xs) < 4:  # a rectangle ring is 5 points (closed); < 4 is not an area
+        return None
+    west, east = min(xs), max(xs)
+    south, north = min(ys), max(ys)
+    if west == east or south == north:
+        return None
+    return (west, south, east, north)
+
+
+# --------------------------------------------------------------------------- #
+# Plain-language validation messages
+# --------------------------------------------------------------------------- #
+
+_FEATURE_ROWS_RE = re.compile(r"has (\d+) rows")
+
+_REPAIR_NOTICE = (
+    "The uploaded boundary was invalid and has been repaired for screening. "
+    "Review the displayed boundary before continuing."
+)
+
+
+def friendly_site_error(message: str) -> tuple[str, str | None]:
+    """Translate a raw ``read_geojson_site`` / ``validate_site`` error for the UI.
+
+    Returns ``(headline, detail)``: ``headline`` is a plain-language sentence;
+    ``detail`` is the original technical message to show in smaller text / an
+    expander, or ``None`` when the headline already says everything. The raw
+    ``validate_site`` messages themselves are left untouched.
+    """
+    text = str(message).strip()
+    low = text.lower()
+
+    if (
+        "could not be parsed as json" in low
+        or "not utf-8" in low
+        or "root must be a json object" in low
+    ):
+        return (
+            "We couldn't read this file as valid GeoJSON. "
+            "Check the file format and try again.",
+            text,
+        )
+    if "unsupported geojson type" in low:
+        return (
+            "This file isn't a GeoJSON Feature, FeatureCollection or geometry.",
+            text,
+        )
+    if "no features" in low:
+        return ("This GeoJSON contains no site features.", None)
+    if "has no geometry" in low or "feature geometry could not be read" in low:
+        return ("A feature in this file has no usable geometry.", text)
+    match = _FEATURE_ROWS_RE.search(text)
+    if match:
+        return (
+            f"Upload one site feature at a time. This file contains {match.group(1)} features.",
+            None,
+        )
+    if "exactly one site feature" in low:
+        return ("Upload one site feature at a time.", None)
+    if "polygon or multipolygon" in low:
+        return ("The candidate site must be a Polygon or MultiPolygon.", text)
+    if "missing or empty" in low:
+        return ("The uploaded feature has no usable polygon geometry.", None)
+    if "could not be repaired" in low:
+        return (
+            "This boundary is invalid and couldn't be repaired for screening.",
+            text,
+        )
+    if "non-positive area" in low:
+        return (
+            "The uploaded boundary has no area once projected to British National Grid.",
+            text,
+        )
+    if "no crs" in low:
+        return (
+            "This GeoJSON has no coordinate reference system, so it can't be projected.",
+            text,
+        )
+    return ("This site couldn't be validated.", text)
+
+
+def friendly_repair_notice(messages) -> str | None:
+    """Return one user-facing line if ``validate_site`` reported a geometry repair.
+
+    The underlying technical warning is kept available separately (the app shows
+    it in smaller text); this only reframes the headline copy.
+    """
+    for message in messages:
+        if "invalid" in str(message).lower():
+            return _REPAIR_NOTICE
+    return None
 
 
 # --------------------------------------------------------------------------- #
