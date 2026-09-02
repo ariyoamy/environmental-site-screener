@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from environmental_site_screener.app_data import (
+    carto_tile_layer,
     default_data_sources,
     demo_gallery,
     demo_site,
@@ -681,7 +682,7 @@ def test_define_area_over_ireland_blocks_screening_and_hides_stale_result():
     at.run(timeout=60)
 
     assert not list(at.exception)
-    assert at.button[0].disabled is True  # Screen site disabled
+    assert _screen_button(at).disabled is True  # Screen site disabled
     assert _count_cards(at) == 0
     assert len(at.tabs) == 0
     assert any("England only" in e.value for e in at.error)
@@ -697,7 +698,7 @@ def test_define_area_with_default_england_rectangle_enables_screening():
 
     assert not list(at.exception)
     assert not at.error
-    assert at.button[0].disabled is False  # defaults are a small site near Cambridge
+    assert _screen_button(at).disabled is False  # defaults are a small Cambridge site
 
 
 @pytestmark_apptest
@@ -715,7 +716,7 @@ def test_border_crossing_rectangle_is_blocked():
     at.run(timeout=60)
 
     assert not list(at.exception)
-    assert at.button[0].disabled is True
+    assert _screen_button(at).disabled is True
     assert any("outside" in e.value.lower() for e in at.error)
 
 
@@ -735,6 +736,10 @@ def test_switching_demo_example_marks_the_old_result_stale():
     assert any("screen the site again" in i.value.lower() for i in at.info)
 
 
+def _screen_button(at):
+    return next(b for b in at.button if b.label == "Screen site")
+
+
 @pytestmark_apptest
 def test_define_area_draw_mode_renders_and_defaults_to_cambridge():
     at = _app_test()
@@ -747,10 +752,60 @@ def test_define_area_draw_mode_renders_and_defaults_to_cambridge():
     # the Draw/Enter toggle is present and the drawing surface did not crash AppTest
     assert any(r.label == "Define area mode" for r in at.radio)
     assert at.radio(key="draw_mode").value == "Draw on map"
+    # the compact map offers the larger view
+    assert any(b.key == "draw_expand_btn" for b in at.button)
     # shared coordinate state seeded to the Cambridge extent, screening enabled
     assert at.number_input(key="draw_w").value == 0.10000
     assert at.number_input(key="draw_n").value == 52.20600
-    assert at.button[0].disabled is False
+    assert _screen_button(at).disabled is False
+
+
+@pytestmark_apptest
+def test_define_area_large_view_opens_collapses_and_shares_bounds():
+    at = _app_test()
+    at.run(timeout=120)
+    at.radio[0].set_value("Define area")
+    at.run(timeout=60)
+
+    # edit a coordinate in the compact fine-tune inputs first
+    at.number_input(key="draw_e").set_value(0.11500)
+    at.run(timeout=60)
+
+    at.button(key="draw_expand_btn").click()
+    at.run(timeout=60)
+    assert not list(at.exception)
+    assert at.session_state["draw_expanded"] is True
+    # the large view replaces the result map and offers a collapse control
+    assert any(b.key == "draw_collapse_btn" for b in at.button)
+    assert not any(b.key == "draw_expand_btn" for b in at.button)
+    assert _screen_button(at).disabled is False  # screening still available
+    # the large view reads the same rectangle state as the compact map
+    assert any("E 0.11500" in c.value for c in at.caption)
+
+    at.button(key="draw_collapse_btn").click()
+    at.run(timeout=60)
+
+    assert not list(at.exception)
+    assert at.session_state["draw_expanded"] is False
+    # back in compact mode the shared rectangle is unchanged
+    assert at.number_input(key="draw_e").value == 0.11500
+    assert any(b.key == "draw_expand_btn" for b in at.button)
+
+
+@pytestmark_apptest
+def test_switching_away_from_define_area_closes_the_large_view():
+    at = _app_test()
+    at.run(timeout=120)
+    at.radio[0].set_value("Define area")
+    at.run(timeout=60)
+    at.button(key="draw_expand_btn").click()
+    at.run(timeout=60)
+    assert at.session_state["draw_expanded"] is True
+
+    at.radio[0].set_value("Demo site")
+    at.run(timeout=60)
+    assert not list(at.exception)
+    assert at.session_state["draw_expanded"] is False
 
 
 @pytestmark_apptest
@@ -1113,3 +1168,82 @@ def test_friendly_site_error_falls_back_without_crashing():
     headline, detail = friendly_site_error("some message we have never seen before")
     assert headline and not _BANNED.search(headline)
     assert detail == "some message we have never seen before"
+
+
+# --------------------------------------------------------------------------- #
+# Video-prep UI pass: CARTO basemap key, header wording, footer, compact cards
+# --------------------------------------------------------------------------- #
+
+
+def test_carto_tile_layer_uses_the_key_only_in_the_url():
+    keyed = carto_tile_layer("FAKE_CARTO_KEY_abc123")
+    assert "key=FAKE_CARTO_KEY_abc123" in keyed["tiles"]
+    assert "cartocdn.com" in keyed["tiles"]
+    # the key must not leak into anything else the component renders
+    assert "FAKE_CARTO_KEY_abc123" not in keyed["attr"]
+    assert "FAKE_CARTO_KEY_abc123" not in keyed["name"]
+    # attribution is always present
+    assert "OpenStreetMap" in keyed["attr"] and "CARTO" in keyed["attr"]
+
+
+@pytest.mark.parametrize("missing", [None, "", "   "])
+def test_carto_tile_layer_falls_back_to_osm_without_a_key(missing):
+    fallback = carto_tile_layer(missing)
+    assert "openstreetmap.org" in fallback["tiles"].lower()
+    assert "key=" not in fallback["tiles"]
+    assert "OpenStreetMap" in fallback["attr"]
+    assert "carto" not in fallback["tiles"].lower()
+
+
+def test_carto_key_helper_reads_env_and_trims(monkeypatch):
+    app = _import_app()
+    monkeypatch.delenv("CARTO_BASEMAP_API_KEY", raising=False)
+    # st.secrets has no such key in the test environment
+    assert app._carto_api_key() is None
+
+    monkeypatch.setenv("CARTO_BASEMAP_API_KEY", "  env-key-xyz  ")
+    assert app._carto_api_key() == "env-key-xyz"
+
+    monkeypatch.setenv("CARTO_BASEMAP_API_KEY", "   ")
+    assert app._carto_api_key() is None
+
+
+@pytestmark_apptest
+def test_header_uses_proof_of_concept_wording_and_no_stale_disclaimer():
+    at = _app_test()
+    at.run(timeout=120)
+    header = " ".join(m.value for m in at.markdown if "ess-subline" in m.value)
+    assert "Proof-of-concept" in header
+    assert "not an environmental assessment or a planning decision" not in header
+    # must not imply future regulatory status
+    assert "not officially usable" not in header.lower()
+
+
+@pytestmark_apptest
+def test_footer_has_contact_links():
+    at = _app_test()
+    at.run(timeout=120)
+    footer = " ".join(
+        m.value for m in at.markdown if "ess-footer-links" in m.value and "<a href" in m.value
+    )
+    assert "https://ariyoamy.github.io/" in footer
+    assert "https://github.com/ariyoamy" in footer
+    assert "mailto:ariyoamy@gmail.com" in footer
+    assert 'target="_blank"' in footer  # external links open in a new tab
+
+
+@pytestmark_apptest
+def test_compact_result_cards_keep_theme_state_and_metric():
+    at = _app_test()
+    _inject_demo_result(at, mk_result(sssi=mk_sssi(has_overlap=True)))
+    at.run(timeout=120)
+
+    cards = [m.value for m in at.markdown if _CARD_MARK in m.value]
+    assert len(cards) == 5
+    blob = " ".join(cards)
+    for theme in ("SSSI", "Priority Habitats", "Ancient Woodland", "Flood Zones"):
+        assert theme in blob
+    assert "Mapped overlap" in blob  # result state still shown
+    assert "%" in blob  # headline percentage still shown
+    assert "of site" in blob  # secondary metric still shown
+    assert not _BANNED.search(blob)

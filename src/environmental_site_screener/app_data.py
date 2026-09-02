@@ -11,6 +11,7 @@ It covers a few small jobs:
 * building a one-rectangle candidate site from typed bounding coordinates (the
   "Define area" convenience input);
 * turning raw validation errors into plain-language messages for the UI;
+* choosing the basemap tile layer for the "Define area" drawing map;
 * resolving and checking the local raw-data source paths the screening backend
   needs.
 """
@@ -237,6 +238,53 @@ def rect_bounds_from_drawing(feature) -> tuple[float, float, float, float] | Non
     if west == east or south == north:
         return None
     return (west, south, east, north)
+
+
+# --------------------------------------------------------------------------- #
+# Basemap for the "Define area" drawing map
+# --------------------------------------------------------------------------- #
+
+# CARTO Voyager raster tiles. The `{s}` subdomain and `{z}/{x}/{y}` placeholders
+# are filled in by Leaflet at request time. A CARTO Basemaps API key is appended
+# as a query parameter when one is configured; without a key CARTO shows an
+# "API key required" watermark, so the app falls back to OpenStreetMap tiles.
+_CARTO_RASTER_URL = (
+    "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png"
+)
+_CARTO_ATTRIBUTION = (
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> '
+    'contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+)
+_OSM_TILES_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+_OSM_ATTRIBUTION = (
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> '
+    "contributors"
+)
+
+
+def carto_tile_layer(api_key: str | None) -> dict:
+    """Tile-layer settings for the Define-area drawing map.
+
+    With a CARTO Basemaps API key, use CARTO Voyager raster tiles and append the
+    key as a query parameter. Without one, fall back to key-free OpenStreetMap
+    tiles. Attribution is always included; the key, when present, is only ever in
+    the ``tiles`` URL.
+
+    Returns a dict with ``tiles``, ``attr`` and ``name``, ready to hand to
+    ``folium.TileLayer(**...)`` or ``folium.Map(tiles=..., attr=...)``.
+    """
+    key = (api_key or "").strip()
+    if key:
+        return {
+            "tiles": f"{_CARTO_RASTER_URL}?key={key}",
+            "attr": _CARTO_ATTRIBUTION,
+            "name": "CARTO Voyager",
+        }
+    return {
+        "tiles": _OSM_TILES_URL,
+        "attr": _OSM_ATTRIBUTION,
+        "name": "OpenStreetMap",
+    }
 
 
 # --------------------------------------------------------------------------- #

@@ -14,6 +14,7 @@ control - it re-uses the stored result and never re-runs any analysis.
 from __future__ import annotations
 
 import html
+import os
 import sys
 import time
 import warnings
@@ -28,6 +29,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from environmental_site_screener.app_data import (  # noqa: E402
+    carto_tile_layer,
     default_data_sources,
     demo_gallery,
     friendly_repair_notice,
@@ -77,9 +79,11 @@ try:  # optional: only the "Define area -> Draw on map" input needs these
 except ImportError:  # pragma: no cover - exercised only without the extra deps
     _DRAW_MAP_AVAILABLE = False
 
-MAP_HEIGHT = 690
-DRAW_MAP_HEIGHT = 330
+MAP_HEIGHT = 560
+DRAW_MAP_HEIGHT = 300
+DRAW_MAP_LARGE_HEIGHT = 620
 _LAYER_KEY_PREFIX = "lyr_"
+_DRAW_EXPANDED_KEY = "draw_expanded"
 
 # Purely advisory: above this the app tells the user screening will take longer.
 # It never blocks screening and never resizes anything - it is not a
@@ -144,9 +148,9 @@ CSS = """
 .stApp, .stMarkdown, .stText, [data-testid="stCaptionContainer"] { color: var(--ess-ink); }
 h1, h2, h3, h4, h5 { color: var(--ess-ink); letter-spacing: -0.01em; }
 
-/* give the title room to clear Streamlit's top chrome */
+/* give the title room to clear Streamlit's top chrome, without a tall gap */
 [data-testid="stMainBlockContainer"], .block-container {
-  padding-top: 3.2rem; padding-bottom: 3.5rem; max-width: 1620px;
+  padding-top: 2.4rem; padding-bottom: 2.2rem; max-width: 1620px;
 }
 
 /* ---- header ------------------------------------------------------------- */
@@ -171,21 +175,21 @@ h1, h2, h3, h4, h5 { color: var(--ess-ink); letter-spacing: -0.01em; }
   font-size: 1.16rem; font-weight: 400; color: var(--ess-ink-soft); margin-top: 5px;
   max-width: 44ch;
 }
-.ess-subline { font-size: 0.88rem; color: var(--ess-muted); margin-top: 12px; }
+.ess-subline { font-size: 0.88rem; color: var(--ess-muted); margin-top: 8px; }
 .ess-pill {
   font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.11em;
   white-space: nowrap; color: var(--ess-primary); background: var(--ess-primary-soft);
   border: 1px solid #c9e2d9; padding: 6px 12px; border-radius: 999px; margin-top: 7px;
 }
-.ess-rule { height: 1px; background: var(--ess-border); margin: 22px 0 26px; }
+.ess-rule { height: 1px; background: var(--ess-border); margin: 16px 0 18px; }
 
 /* ---- section headings (real headings, not tiny labels) ------------------- */
 .ess-h { font-size: 1.16rem; font-weight: 700; color: var(--ess-ink); letter-spacing: -0.01em; }
-.ess-h-sub { font-size: 0.88rem; color: var(--ess-muted); margin: 3px 0 14px; line-height: 1.5; }
+.ess-h-sub { font-size: 0.88rem; color: var(--ess-muted); margin: 3px 0 10px; line-height: 1.5; }
 
 /* ---- left panel: numbered progression ----------------------------------- */
-.ess-step { display: flex; align-items: center; gap: 9px; margin: 18px 0 9px; }
-.ess-step:first-of-type { margin-top: 6px; }
+.ess-step { display: flex; align-items: center; gap: 9px; margin: 13px 0 7px; }
+.ess-step:first-of-type { margin-top: 4px; }
 .ess-step-n {
   width: 21px; height: 21px; border-radius: 999px; flex: none;
   background: var(--ess-primary-soft); color: var(--ess-primary);
@@ -198,11 +202,11 @@ h1, h2, h3, h4, h5 { color: var(--ess-ink); letter-spacing: -0.01em; }
 .ess-facts { font-size: 0.9rem; color: var(--ess-ink-soft); line-height: 1.75; }
 .ess-facts b { color: var(--ess-ink); font-weight: 600; }
 
-/* ---- result cards ----------------------------------------------------------- */
+/* ---- result cards (compact summary cards; detail lives in Explore results) -- */
 .ess-card {
   background: var(--ess-surface); border: 1px solid var(--ess-border);
   border-left: 4px solid var(--ess-border-2); border-radius: var(--ess-radius);
-  padding: 13px 15px 13px; margin-bottom: 11px; min-height: 134px;
+  padding: 9px 13px 10px; margin-bottom: 8px;
 }
 .ess-card-head { display: flex; align-items: center; gap: 8px; }
 .ess-card-dot {
@@ -210,15 +214,15 @@ h1, h2, h3, h4, h5 { color: var(--ess-ink); letter-spacing: -0.01em; }
   box-shadow: inset 0 0 0 1px rgba(0,0,0,.14);
 }
 .ess-card-theme { font-size: 0.94rem; font-weight: 700; color: var(--ess-ink); }
-.ess-card-state { font-size: 0.86rem; font-weight: 650; margin-top: 6px; color: var(--ess-ink-soft); }
+.ess-card-state { font-size: 0.86rem; font-weight: 650; margin-top: 3px; color: var(--ess-ink-soft); }
 .ess-card.is-overlap .ess-card-state { color: var(--ess-primary); }
 .ess-card.is-context .ess-card-state { color: #6a66a0; }
 .ess-card-primary {
-  font-size: 1.62rem; font-weight: 700; letter-spacing: -0.02em;
-  color: var(--ess-ink); margin-top: 4px; line-height: 1.05;
+  font-size: 1.5rem; font-weight: 700; letter-spacing: -0.02em;
+  color: var(--ess-ink); margin-top: 2px; line-height: 1.05;
 }
-.ess-card-secondary { font-size: 0.88rem; color: var(--ess-ink-soft); margin-top: 2px; }
-.ess-card-context { font-size: 0.82rem; color: var(--ess-muted); margin-top: 7px; }
+.ess-card-secondary { font-size: 0.88rem; color: var(--ess-ink-soft); margin-top: 1px; }
+.ess-card-context { font-size: 0.82rem; color: var(--ess-muted); margin-top: 4px; }
 
 /* ---- "Mapped overlap by theme" bars ------------------------------------- */
 .ess-bars { margin: 2px 0 20px; }
@@ -247,8 +251,8 @@ h1, h2, h3, h4, h5 { color: var(--ess-ink); letter-spacing: -0.01em; }
   overflow: hidden; box-shadow: var(--ess-shadow);
 }
 .ess-legend {
-  display: flex; flex-wrap: wrap; gap: 7px 18px;
-  margin-top: 12px; font-size: 0.85rem; color: var(--ess-ink-soft);
+  display: flex; flex-wrap: wrap; gap: 6px 18px;
+  margin-top: 8px; font-size: 0.85rem; color: var(--ess-ink-soft);
 }
 .ess-legend span { display: inline-flex; align-items: center; gap: 7px; }
 .ess-legend i {
@@ -297,6 +301,18 @@ h1, h2, h3, h4, h5 { color: var(--ess-ink); letter-spacing: -0.01em; }
 /* provenance / limitations body - one comfortable step below body copy */
 [data-testid="stExpanderDetails"] .stMarkdown p,
 [data-testid="stExpanderDetails"] .stMarkdown li { font-size: 0.9rem; line-height: 1.6; }
+
+/* ---- footer / contact ------------------------------------------------------ */
+.ess-footer { margin-top: 8px; }
+.ess-footer-msg { font-size: 0.86rem; color: var(--ess-muted); line-height: 1.55; max-width: 74ch; }
+.ess-footer-links {
+  margin-top: 7px; font-size: 0.88rem; display: flex; flex-wrap: wrap;
+  align-items: center; gap: 6px 12px;
+}
+.ess-footer-links b { color: var(--ess-ink); font-weight: 650; }
+.ess-footer-links a { color: var(--ess-primary); text-decoration: none; }
+.ess-footer-links a:hover { text-decoration: underline; }
+.ess-footer-links .sep { color: var(--ess-border-2); }
 </style>
 """
 
@@ -355,6 +371,25 @@ def get_england_boundary():
     return load_england_boundary(sources["revised_coverage_path"])
 
 
+def _carto_api_key() -> str | None:
+    """CARTO Basemaps API key from Streamlit secrets or the environment, or None.
+
+    Never hard-coded and never committed. Local use: put
+    ``CARTO_BASEMAP_API_KEY = "..."`` in ``.streamlit/secrets.toml`` (git-ignored)
+    or export it as an environment variable. Absent is fine - the drawing map
+    falls back to OpenStreetMap tiles.
+    """
+    value = None
+    try:
+        value = st.secrets.get("CARTO_BASEMAP_API_KEY")
+    except Exception:  # no secrets.toml and no secrets configured at all
+        value = None
+    if not value:
+        value = os.environ.get("CARTO_BASEMAP_API_KEY")
+    value = (value or "").strip()
+    return value or None
+
+
 # --------------------------------------------------------------------------- #
 # Rendering helpers
 # --------------------------------------------------------------------------- #
@@ -372,10 +407,29 @@ def render_header() -> None:
         "</div></div>"
         '<span class="ess-pill">Desktop screening &middot; England</span>'
         "</div>"
-        '<div class="ess-subline">Preliminary desktop screening against Natural '
-        "England and Environment Agency datasets &mdash; not an environmental "
-        "assessment or a planning decision.</div>"
+        '<div class="ess-subline">Proof-of-concept desktop screening using Natural '
+        "England and Environment Agency data. Intended for early exploration "
+        "rather than statutory assessment or planning advice.</div>"
         '<div class="ess-rule"></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_footer() -> None:
+    st.markdown(
+        '<div class="ess-footer">'
+        '<div class="ess-footer-msg">Interested in the project or in taking the '
+        "idea further? I would be happy to discuss potential applications, "
+        "feedback or related GIS work.</div>"
+        '<div class="ess-footer-links">'
+        "<b>Amy Ariyo</b>"
+        '<span class="sep">&middot;</span>'
+        '<a href="https://ariyoamy.github.io/" target="_blank" rel="noopener">Portfolio</a>'
+        '<span class="sep">&middot;</span>'
+        '<a href="https://github.com/ariyoamy" target="_blank" rel="noopener">GitHub</a>'
+        '<span class="sep">&middot;</span>'
+        '<a href="mailto:ariyoamy@gmail.com">Email</a>'
+        "</div></div>",
         unsafe_allow_html=True,
     )
 
@@ -515,30 +569,43 @@ def render_site_facts(raw, validated, repair_messages) -> None:
 # --------------------------------------------------------------------------- #
 
 
+# The canonical rectangle lives in the plain (non-widget) key ``draw_bounds`` so
+# it survives even when the coordinate ``number_input`` widgets are not rendered
+# (Streamlit drops widget-keyed state for a widget that is absent from a run, and
+# the large drawing view deliberately hides those widgets). The ``draw_w`` /
+# ``draw_s`` / ``draw_e`` / ``draw_n`` keys back the widgets and are re-seeded
+# from ``draw_bounds`` whenever they are missing.
+_DRAW_BOUNDS_KEY = "draw_bounds"
+
+
 def _ensure_draw_defaults() -> None:
-    """Seed the shared West/South/East/North state used by both Define-area modes."""
-    for key, value in zip(_DRAW_KEYS, _DRAW_DEFAULT_BOUNDS):
+    """Seed the canonical rectangle and the coordinate-widget keys."""
+    st.session_state.setdefault(_DRAW_BOUNDS_KEY, tuple(_DRAW_DEFAULT_BOUNDS))
+    bounds = st.session_state[_DRAW_BOUNDS_KEY]
+    for key, value in zip(_DRAW_KEYS, bounds):
         st.session_state.setdefault(key, float(value))
 
 
 def _current_draw_bounds() -> tuple[float, float, float, float]:
-    """The current ``(west, south, east, north)`` from session state."""
-    return tuple(float(st.session_state[key]) for key in _DRAW_KEYS)
+    """The current ``(west, south, east, north)`` rectangle."""
+    return tuple(float(v) for v in st.session_state[_DRAW_BOUNDS_KEY])
 
 
-def _apply_draw_bounds(bounds) -> bool:
-    """Write ``(w, s, e, n)`` into session state; return ``True`` if anything moved.
+def _set_draw_bounds(bounds) -> bool:
+    """Update the canonical rectangle (rounded to 5 dp). Returns True if it moved.
 
-    Values are rounded to the 5 dp the coordinate inputs display, so re-reading
-    the same drawn rectangle on the next run is a no-op (no rerun loop).
+    Also writes the widget-backing keys so the coordinate inputs reflect the new
+    value on their next render; safe because callers do this before those widgets
+    are instantiated (or when they are not rendered at all).
     """
-    changed = False
-    for key, value in zip(_DRAW_KEYS, bounds):
-        rounded = round(float(value), 5)
-        if abs(rounded - round(float(st.session_state.get(key, 0.0)), 5)) > 1e-9:
-            st.session_state[key] = rounded
-            changed = True
-    return changed
+    rounded = tuple(round(float(v), 5) for v in bounds)
+    current = tuple(round(float(v), 5) for v in st.session_state[_DRAW_BOUNDS_KEY])
+    if all(abs(a - b) <= 1e-9 for a, b in zip(rounded, current)):
+        return False
+    st.session_state[_DRAW_BOUNDS_KEY] = rounded
+    for key, value in zip(_DRAW_KEYS, rounded):
+        st.session_state[key] = value
+    return True
 
 
 def _coordinate_inputs() -> None:
@@ -548,24 +615,36 @@ def _coordinate_inputs() -> None:
     col_s, col_n = st.columns(2)
     col_s.number_input("South latitude", format="%.5f", step=0.001, key="draw_s")
     col_n.number_input("North latitude", format="%.5f", step=0.001, key="draw_n")
+    # push any typed change into the canonical rectangle for this run
+    typed = tuple(float(st.session_state[key]) for key in _DRAW_KEYS)
+    if typed != tuple(st.session_state[_DRAW_BOUNDS_KEY]):
+        st.session_state[_DRAW_BOUNDS_KEY] = tuple(round(v, 5) for v in typed)
 
 
-def _draw_map() -> None:
-    """Small Leaflet drawing surface: draw / drag / resize one rectangle.
+def _draw_expanded() -> bool:
+    """Whether the big Define-area drawing view is currently open."""
+    return bool(_DRAW_MAP_AVAILABLE and st.session_state.get(_DRAW_EXPANDED_KEY))
 
-    Any new rectangle is folded back into the shared coordinate state and the
-    script reruns so the rest of the panel and the PyDeck result map pick it up.
-    Screening still happens only when the user clicks *Screen site*.
+
+def _build_draw_figure():
+    """The Folium map for either drawing view: current rectangle + one Draw tool.
+
+    Basemap tiles come from CARTO Voyager when a ``CARTO_BASEMAP_API_KEY`` is
+    configured (secrets or environment), otherwise key-free OpenStreetMap. The
+    key, when present, is only ever in the tile URL; attribution is always shown.
     """
     west, south, east, north = _current_draw_bounds()
-    generation = st.session_state.setdefault("draw_map_gen", 0)
+    tiles = carto_tile_layer(_carto_api_key())
 
     fmap = folium.Map(
         location=[(south + north) / 2.0, (west + east) / 2.0],
         zoom_start=12,
-        tiles="CartoDB positron",
+        tiles=None,
         control_scale=True,
     )
+    folium.TileLayer(
+        tiles=tiles["tiles"], attr=tiles["attr"], name=tiles["name"], control=False
+    ).add_to(fmap)
     folium.Rectangle(
         bounds=[[south, west], [north, east]],
         color="#1f6f5c",
@@ -584,31 +663,78 @@ def _draw_map() -> None:
         },
         edit_options={"edit": True, "remove": True},
     ).add_to(fmap)
+    return fmap
 
+
+def _reconcile_drawing(out) -> None:
+    """Fold a new drawn rectangle into the shared coordinate state, then rerun.
+
+    Screening still happens only when the user clicks *Screen site*.
+    """
+    drawings = (out or {}).get("all_drawings") or []
+    if not drawings:
+        return
+    bounds = rect_bounds_from_drawing(drawings[-1])
+    if bounds is not None and _set_draw_bounds(bounds):
+        # Bump the widget key so Leaflet's own drawn layer is cleared and only
+        # the authoritative folium.Rectangle remains on the next run.
+        st.session_state["draw_map_gen"] = st.session_state.get("draw_map_gen", 0) + 1
+        st.rerun()
+
+
+def _compact_draw_map() -> None:
+    """The narrow sidebar drawing surface, with a button to open the large view."""
+    generation = st.session_state.setdefault("draw_map_gen", 0)
     out = st_folium(
-        fmap,
+        _build_draw_figure(),
         key=f"draw_map_{generation}",
         height=DRAW_MAP_HEIGHT,
         use_container_width=True,
         returned_objects=["all_drawings"],
     )
     st.caption(
-        "Draw a rectangle, then drag or resize it with the edit tool. Only one "
-        "rectangle is used - the most recent. Fine-tune the exact numbers below."
+        "Draw a rectangle, then drag or resize it with the edit tool. Only the "
+        "most recent rectangle is used."
     )
+    if st.button("Expand drawing map", width="stretch", key="draw_expand_btn"):
+        st.session_state[_DRAW_EXPANDED_KEY] = True
+        st.rerun()
+    _reconcile_drawing(out)
 
-    drawings = (out or {}).get("all_drawings") or []
-    if drawings:
-        bounds = rect_bounds_from_drawing(drawings[-1])
-        if bounds is not None and _apply_draw_bounds(bounds):
-            # Bump the widget key so Leaflet's own drawn layer is cleared and only
-            # the authoritative folium.Rectangle remains on the next run.
-            st.session_state["draw_map_gen"] = generation + 1
-            st.rerun()
+
+def render_large_draw_map() -> None:
+    """The wide drawing view, shown in the centre workspace instead of the result
+    map while the large view is open. Reads and writes the same rectangle state as
+    the compact sidebar map; only one drawing map renders at a time."""
+    render_section(
+        "Define area",
+        "Draw, drag or resize one rectangle, then collapse this view and screen it.",
+    )
+    if st.button("Done - back to the compact panel", key="draw_collapse_btn"):
+        st.session_state[_DRAW_EXPANDED_KEY] = False
+        st.rerun()
+
+    generation = st.session_state.setdefault("draw_map_gen", 0)
+    out = st_folium(
+        _build_draw_figure(),
+        key=f"draw_map_large_{generation}",
+        height=DRAW_MAP_LARGE_HEIGHT,
+        use_container_width=True,
+        returned_objects=["all_drawings"],
+    )
+    west, south, east, north = _current_draw_bounds()
+    st.caption(
+        f"Rectangle: W {west:.5f}, S {south:.5f}, E {east:.5f}, N {north:.5f}. "
+        "Screening still runs only when you press Screen site."
+    )
+    _reconcile_drawing(out)
 
 
 def _site_source_input(source):
     """Return ``(raw_gdf, error_str)`` for the chosen candidate-site source."""
+    if source != "Define area":
+        st.session_state[_DRAW_EXPANDED_KEY] = False
+
     if source == "Demo site":
         gallery = demo_gallery()
         labels = [site.label for site in gallery]
@@ -630,10 +756,22 @@ def _site_source_input(source):
         else:
             mode = "Enter coordinates"
 
+        if mode != "Draw on map":
+            st.session_state[_DRAW_EXPANDED_KEY] = False
+
         if mode == "Draw on map":
-            _draw_map()
-            with st.expander("Fine-tune coordinates (WGS84 decimal degrees)"):
-                _coordinate_inputs()
+            if _draw_expanded():
+                # The large view (rendered in the centre workspace) owns the
+                # rectangle this run. Do not also instantiate the coordinate
+                # widgets here - the large map's reconcile writes their state.
+                st.caption(
+                    "The large drawing view is open in the main panel. Adjust the "
+                    "rectangle there, then choose Done."
+                )
+            else:
+                _compact_draw_map()
+                with st.expander("Fine-tune coordinates (WGS84 decimal degrees)"):
+                    _coordinate_inputs()
         else:
             st.caption(
                 "One rectangle in decimal degrees (WGS84), e.g. from a web map. "
@@ -670,13 +808,15 @@ def _report_site_error(message: str) -> None:
 def site_panel(england_boundary):
     """Render the site controls.
 
-    Returns ``(raw_gdf, validated_gdf, display_gdf, error_str)``:
+    Returns ``(raw_gdf, validated_gdf, display_gdf, error_str, draw_large)``:
 
     * ``validated_gdf`` - a screenable site in EPSG:27700, or ``None`` if the
       boundary failed validation, is outside England, or crosses the England
       boundary. A very large area is still screenable (advisory note only).
     * ``display_gdf`` - a boundary to keep on the map even though it cannot be
       screened (an outside/crossing site), or ``None``.
+    * ``draw_large`` - ``True`` when the wide Define-area drawing view should
+      replace the result map in the centre workspace this run.
     """
     render_section(
         "Candidate site",
@@ -737,7 +877,7 @@ def site_panel(england_boundary):
         st.caption("Waiting for a site boundary.")
 
     render_step(3, "Run screening")
-    return raw, validated, display_site, error
+    return raw, validated, display_site, error, _draw_expanded()
 
 
 def run_screening(validated) -> None:
@@ -885,7 +1025,7 @@ def main() -> None:
 
     with left:
         with st.container(border=True):
-            _, validated, display_site, _ = site_panel(england_boundary)
+            _, validated, display_site, _, draw_large = site_panel(england_boundary)
             run_clicked = st.button(
                 "Screen site",
                 type="primary",
@@ -906,7 +1046,10 @@ def main() -> None:
         result = None
 
     with centre:
-        render_map(result, validated, display_site, stale)
+        if draw_large:
+            render_large_draw_map()
+        else:
+            render_map(result, validated, display_site, stale)
 
     with right:
         with st.container(border=True):
@@ -937,6 +1080,10 @@ def main() -> None:
         run_screening(validated)
 
     if result is not None:
+        st.markdown(
+            '<div class="ess-rule" style="margin: 16px 0 18px"></div>',
+            unsafe_allow_html=True,
+        )
         render_section(
             "Explore results",
             "Detailed results, mapped evidence and source information for each "
@@ -947,9 +1094,11 @@ def main() -> None:
             with tab:
                 render_detail(build_theme_detail(result, key))
 
-    st.markdown('<div class="ess-rule" style="margin-top: 28px"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="ess-rule" style="margin-top: 22px"></div>', unsafe_allow_html=True)
     with st.expander("Data sources and limitations"):
         st.markdown(PROVENANCE_MD)
+
+    render_footer()
 
 
 if __name__ == "__main__":
