@@ -14,9 +14,11 @@ This is a portfolio project. I wanted to build something close to the kind of GI
 
 ## Project walkthrough
 
-![Environmental Site Screener showing a screened candidate site, with the candidate panel on the left, interactive result map in the centre and five environmental result cards on the right.](screenshots/app-overview.png)
+[![Watch the Environmental Site Screener walkthrough](screenshots/app-overview.png)](https://www.youtube.com/watch?v=Ij2mshi_T-4)
 
-*Video walkthrough to be added here. For now, this shows the screened Suffolk demonstration site.*
+**[Watch the project walkthrough on YouTube →](https://www.youtube.com/watch?v=Ij2mshi_T-4)**
+
+A short walkthrough showing how the app screens a candidate site, explores mapped environmental themes, and lets users define their own screening area.
 
 ## What it does
 
