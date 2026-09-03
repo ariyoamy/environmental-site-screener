@@ -92,9 +92,7 @@ The screening uses public national spatial datasets. The raw files are large and
 
 These are open datasets published by Natural England, the Environment Agency and Ordnance Survey. Check each publisher's current licence terms before reusing the data.
 
-[docs/data_sources.md](docs/data_sources.md) lists the exact source file expected by each loader and where it belongs under `data/raw/`.
-
-[docs/data_audit.md](docs/data_audit.md) records the source inspection, fields used, revision information and known limitations.
+[docs/data_sources.md](docs/data_sources.md) lists the exact source file expected by each loader, where it belongs under `data/raw/`, and the source inspection notes, fields used, revision information and known limitations.
 
 The raw national datasets are deliberately excluded from Git. See [data/README.md](data/README.md) for the local directory layout.
 

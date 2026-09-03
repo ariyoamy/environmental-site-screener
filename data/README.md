@@ -35,8 +35,8 @@ The file names above are the ones the loaders expect. If a file is missing, the
 Streamlit app starts and lists exactly which paths it could not find.
 
 See [../docs/data_sources.md](../docs/data_sources.md) for the publishers,
-formats and revision information, and [../docs/data_audit.md](../docs/data_audit.md)
-for the full source audit.
+formats, source fields, revision information and known limitations, and
+[../docs/methodology.md](../docs/methodology.md) for how each dataset is used.
 
 ## `data/processed/` and `data/cache/`
 

@@ -25,9 +25,8 @@ data/raw/
 data/processed/
 data/cache/
 
-# Streamlit secrets: never commit the real file; the .example is safe to commit
+# Streamlit secrets: never commit the real file
 .streamlit/secrets.toml
-!.streamlit/secrets.toml.example
 
 # Temporary files
 *.tmp
