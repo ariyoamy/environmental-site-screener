@@ -1,5 +1,9 @@
 # Environmental Site Screener
 
+[![Watch the Environmental Site Screener walkthrough](screenshots/youtube-thumbnail.png)](https://www.youtube.com/watch?v=Ij2mshi_T-4)
+
+**[Watch the project walkthrough on YouTube →](https://www.youtube.com/watch?v=Ij2mshi_T-4)**
+
 Before taking a proposed development or infrastructure site further, an analyst usually has to make the same first set of GIS checks. Does the site overlap a protected site, priority habitat or ancient woodland? Is any of it within a mapped flood zone? Each check means working with a different national dataset, comparing it to the site, and recording what was found.
 
 I built this Python application to bring those first checks into one repeatable workflow. You give it a candidate site boundary in England and it answers a single question:
@@ -12,13 +16,6 @@ Part of the motivation came from the growing role of biodiversity information in
 
 This is a portfolio project. I wanted to build something close to the kind of GIS and environmental analysis work I would like to do professionally, using real national datasets and analytical decisions that I can explain and defend.
 
-## Project walkthrough
-
-[![Watch the Environmental Site Screener walkthrough](screenshots/youtube-thumbnail.png)](https://www.youtube.com/watch?v=Ij2mshi_T-4)
-
-**[Watch the project walkthrough on YouTube →](https://www.youtube.com/watch?v=Ij2mshi_T-4)**
-
-A short walkthrough showing how the app screens a candidate site, explores mapped environmental themes, and lets users define their own screening area.
 
 ## What it does
 
