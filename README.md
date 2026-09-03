@@ -14,7 +14,7 @@ This is a portfolio project. I wanted to build something close to the kind of GI
 
 ## Project walkthrough
 
-[![Watch the Environmental Site Screener walkthrough](screenshots/app-overview.png)](https://www.youtube.com/watch?v=Ij2mshi_T-4)
+[![Watch the Environmental Site Screener walkthrough](screenshots/youtube-thumbnail.png)](https://www.youtube.com/watch?v=Ij2mshi_T-4)
 
 **[Watch the project walkthrough on YouTube →](https://www.youtube.com/watch?v=Ij2mshi_T-4)**
 
